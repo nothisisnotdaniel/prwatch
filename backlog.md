@@ -30,7 +30,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#21](backlog/021-catch-every-write-error-when-saving.md) Catch every write error when saving the ledger and the status → 444-catch-save-write-errors.5aec37763d074f9a863e4e85ce4dfb99
 - [x] [#22](backlog/022-show-a-new-request-in-the.md) Show a new request in the status even when a poll lands mid-write → 445-request-status-race.d41650a57c8844e382f5342710b46d83
 - [x] [#23](backlog/023-write-request-json-without-a-check.md) Write request.json without a check-then-write symlink window → 448-request-write-symlink.f200b8eab1294bad99e5e46bb94227ed
-- [ ] [#24](backlog/024-make-sure-job-py-pr-request.md) Make sure job.py pr request always consumes request.json
+- [x] [#24](backlog/024-make-sure-job-py-pr-request.md) Make sure job.py pr request always consumes request.json → 449-request-always-consumed.97a3ea214ef14befa45d79a528b16db8
 - [ ] [#25](backlog/025-decide-how-long-an-armed-consent.md) Decide how long an armed Consent or Merge button stays armed
 - [ ] [#26](backlog/026-show-a-short-sent-text-after.md) Show a short sent text after a Consent, Merge or Cancel tap
 - [x] [#27](backlog/027-check-the-tap-area-of-the.md) Check the tap area of the on/off switch on the iPhone
