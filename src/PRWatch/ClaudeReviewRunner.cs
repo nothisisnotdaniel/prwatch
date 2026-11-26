@@ -200,24 +200,93 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                 return false;
             }
 
-            string key = PrRules.RunKey(pick.Project, pick.Number);
-            DateTimeOffset startedAt = time.GetUtcNow();
-            LedgerEntry entry = ledger.Start(startedAt);
+            // From here on the process runs: every way out either hands it to a monitor (current set, Monitor
+            // started) or kills it in Abandon, so no claude run is left without a monitor, timeout or record.
+            LedgerEntry? entry = null;
+            CancellationTokenSource? timeout = null;
+            ITimer? touch = null;
+            try
+            {
+                AfterProcessStart();
+                string key = PrRules.RunKey(pick.Project, pick.Number);
+                DateTimeOffset startedAt = time.GetUtcNow();
+                entry = ledger.Start(startedAt);
+                status.Update(previous => previous with
+                {
+                    Runs = previous.Runs.SetItem(key, new RunStatus { HeadSha = pick.HeadSha, StartedAt = startedAt }),
+                    LastError = previous.LastError is { } error
+                        && StatusError.RunCodes.Contains(error.Code, StringComparer.Ordinal)
+                            ? null
+                            : previous.LastError,
+                    UpdateLock = UpdateLock.Run,
+                });
+                timeout = new CancellationTokenSource(Timeout, time);
+                Run run = new(process, key, pick.HeadSha, entry, timeout);
+                touch = time.CreateTimer(_ => updateLock.Touch(time.GetUtcNow()), null, LockTouchInterval,
+                    LockTouchInterval);
+                run.Touch = touch;
+                current = run;
+                run.Monitor = Task.Run(() => MonitorAsync(run));
+                return true;
+            }
+            catch (Exception)
+            {
+                // Broad on purpose: whatever failed, the process is killed and the start undone (fixed code only).
+                Abandon(process, touch, timeout, entry);
+                return false;
+            }
+        }
+    }
+
+    /// <summary>Test-only: called right after the process has started and before its ledger entry, so a test can
+    /// make the rest of the start fail. A no-op in production; never set from config or a request.</summary>
+    internal Action AfterProcessStart { get; init; } = () => { };
+
+    /// <summary>Undoes a start that failed after its process started, under <see cref="gate"/>: kills the process
+    /// tree, disposes the timer, the timeout and the process, releases the update lock (only while it holds
+    /// PRWatch's marker), clears <see cref="current"/>, ends the ledger entry without a cost and, best effort,
+    /// records <c>run_failed</c> with the lock's holder. Never throws.</summary>
+    private void Abandon(Process process, ITimer? touch, CancellationTokenSource? timeout, LedgerEntry? entry)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception
+            or NotSupportedException or AggregateException)
+        {
+            // Already gone (or not all of the tree could be reached).
+        }
+
+        touch?.Dispose();
+        timeout?.Dispose();
+        process.Dispose();
+        updateLock.Release();
+        current = null;
+        DateTimeOffset now = time.GetUtcNow();
+        try
+        {
+            if (entry is not null)
+            {
+                ledger.End(entry, now, null);
+            }
+        }
+        catch (Exception)
+        {
+            // Only the status write that reports a failed ledger write can throw here; the entry is ended.
+        }
+
+        try
+        {
             status.Update(previous => previous with
             {
-                Runs = previous.Runs.SetItem(key, new RunStatus { HeadSha = pick.HeadSha, StartedAt = startedAt }),
-                LastError = previous.LastError is { } error
-                    && StatusError.RunCodes.Contains(error.Code, StringComparer.Ordinal)
-                        ? null
-                        : previous.LastError,
-                UpdateLock = UpdateLock.Run,
+                UpdateLock = updateLock.Holder(),
+                LastError = new StatusError(StatusError.RunFailed, now),
             });
-            Run run = new(process, key, pick.HeadSha, entry, new CancellationTokenSource(Timeout, time));
-            run.Touch = time.CreateTimer(_ => updateLock.Touch(time.GetUtcNow()), null, LockTouchInterval,
-                LockTouchInterval);
-            current = run;
-            run.Monitor = Task.Run(() => MonitorAsync(run));
-            return true;
+        }
+        catch (Exception)
+        {
+            // Best effort: a second failure is ignored, the run is already killed.
         }
     }
 

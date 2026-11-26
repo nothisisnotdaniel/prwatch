@@ -103,7 +103,9 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     `exit-code`; tests supply the environment through the runners' test-only `ReadVariable` hook and never write
     the process environment. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
     `RunTimeoutSeconds` (default 3600).
-  - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`).
+  - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`);
+    a failure after its process started (before the monitor runs) kills the run with its tree, releases the lock and
+    records `run_failed` (test-only hooks `AfterProcessStart` and `StatusStore.BeforeSave`).
   - `scripts/restore.sh` (0755, PRWatch's own): the local restore with the PAT scoped to it (`RestoreScriptTests`).
   - `scripts/launch-agent.sh`, `scripts/updater.sh` (0755): RoomKit's copies of the pinned package; change only
     the block between `# roomkit:app-begin` and `# roomkit:app-end` (`ScriptTests` pins both). Install at login

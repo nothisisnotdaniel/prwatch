@@ -884,6 +884,112 @@ public sealed class RunnerTests
         }
     }
 
+    // --- job 442: a failure after the process started kills the run ----------------------------------
+
+    [Fact]
+    public async Task Start_ThatFailsAfterTheProcessStarted_KillsIt_ReleasesTheLock_AndRecordsRunFailed()
+    {
+        Rig? rigRef = null;
+        using Rig rig = new(afterProcessStart: () =>
+        {
+            WaitForTheStart(rigRef!);
+            throw new InvalidOperationException("hook");
+        });
+        rigRef = rig;
+        FakeClaude.SetStream(rig.Claude, "#wait", Result());
+
+        Assert.False(rig.Runner.TryStart(Alpha1));
+
+        int pid = FakeClaude.StartedPid(rig.Claude)!.Value;
+        await WatcherRig.WaitFor(() => Task.FromResult(!WatcherRig.IsRunning(pid)), "the failed start to be killed");
+        Assert.False(rig.Runner.IsBusy);
+        Assert.Null(rig.Lock.Holder());
+        Assert.False(Directory.Exists(rig.Lock.Path));
+        Assert.NotEqual(UpdateLock.Run, rig.Watch.Status.Current.UpdateLock);
+        Assert.Equal(StatusError.RunFailed, rig.Watch.Status.Current.LastError?.Code);
+        Assert.False(rig.Watch.Status.Current.Runs.ContainsKey("Alpha-1"));
+        Assert.Empty(rig.Watch.Ledger.Entries);
+    }
+
+    [Fact]
+    public async Task Start_AfterAFailedStart_RunsTheSamePickToItsEnd()
+    {
+        Rig? rigRef = null;
+        int starts = 0;
+        using Rig rig = new(afterProcessStart: () =>
+        {
+            if (Interlocked.Increment(ref starts) == 1)
+            {
+                WaitForTheStart(rigRef!);
+                throw new InvalidOperationException("hook");
+            }
+        });
+        rigRef = rig;
+        FakeClaude.SetStream(rig.Claude, "#wait", Result());
+
+        Assert.False(rig.Runner.TryStart(Alpha1));
+        int pid = FakeClaude.StartedPid(rig.Claude)!.Value;
+        await WatcherRig.WaitFor(() => Task.FromResult(!WatcherRig.IsRunning(pid)), "the failed start to be killed");
+
+        FakeClaude.SetStream(rig.Claude, Result());
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        await rig.WaitForEnd("Alpha-1");
+
+        Assert.Equal(RunStatus.Ok, rig.Watch.Status.Current.Runs["Alpha-1"].Result);
+        Assert.NotEqual(pid, Assert.Single(rig.Calls()).GetProperty("pid").GetInt32());
+        Assert.Null(rig.Lock.Holder());
+        Assert.Null(rig.Watch.Status.Current.UpdateLock);
+        Assert.Null(rig.Watch.Status.Current.LastError);
+        Assert.NotNull(Assert.Single(rig.Watch.Ledger.Entries).EndedAt);
+    }
+
+    [Theory]
+    [InlineData("always")]
+    [InlineData("once")]
+    public async Task Start_WhoseStatusWriteThrows_KillsTheRun_NeverThrows_AndEndsTheLedgerEntry(string how)
+    {
+        Rig? rigRef = null;
+        int writes = 0;
+        using Rig rig = new(afterProcessStart: () =>
+        {
+            Rig self = rigRef!;
+            WaitForTheStart(self);
+            self.Watch.Status.BeforeSave = next => how == "always" || Interlocked.Increment(ref writes) == 1
+                ? throw new InvalidOperationException("status")
+                : next;
+        });
+        rigRef = rig;
+        FakeClaude.SetStream(rig.Claude, "#wait", Result());
+
+        bool started = rig.Runner.TryStart(Alpha1);
+        rig.Watch.Status.BeforeSave = next => next;
+
+        Assert.False(started);
+        int pid = FakeClaude.StartedPid(rig.Claude)!.Value;
+        await WatcherRig.WaitFor(() => Task.FromResult(!WatcherRig.IsRunning(pid)), "the failed start to be killed");
+        Assert.False(rig.Runner.IsBusy);
+        Assert.Null(rig.Lock.Holder());
+        Assert.False(Directory.Exists(rig.Lock.Path));
+        Assert.False(rig.Watch.Status.Current.Runs.ContainsKey("Alpha-1"));
+        LedgerEntry entry = Assert.Single(rig.Watch.Ledger.Entries);
+        Assert.NotNull(entry.EndedAt);
+        Assert.Null(entry.CostUsd);
+        if (how == "once")
+        {
+            Assert.Equal(StatusError.RunFailed, rig.Watch.Status.Current.LastError?.Code);
+            Assert.Null(rig.Watch.Status.Current.UpdateLock);
+        }
+    }
+
+    /// <summary>Blocks the start hook until the fake claude has written its pid (it then waits on stdin, which only
+    /// the monitor closes), so the test can check that exactly that process is killed (a bounded wait for that
+    /// state, not a delay).</summary>
+    private static void WaitForTheStart(Rig rig)
+    {
+        WatcherRig.WaitFor(() => Task.FromResult(FakeClaude.StartedPid(rig.Claude) is not null),
+            "the fake claude logged its start").GetAwaiter().GetResult();
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private static string Result(double cost = 0.25, bool isError = false, string text = "done",
@@ -937,7 +1043,10 @@ public sealed class RunnerTests
     {
         /// <param name="readVariable">The runner's environment reader (<see cref="ClaudeReviewRunner.ReadVariable"/>);
         /// <c>null</c> keeps the real process environment.</param>
-        public Rig(TimeSpan? timeout = null, Func<string, string?>? readVariable = null)
+        /// <param name="afterProcessStart">The runner's <see cref="ClaudeReviewRunner.AfterProcessStart"/> hook;
+        /// <c>null</c> keeps the no-op.</param>
+        public Rig(TimeSpan? timeout = null, Func<string, string?>? readVariable = null,
+            Action? afterProcessStart = null)
         {
             Watch = new WatcherRig();
             CallsFile = Path.Combine(Watch.Folder, "claude-calls.jsonl");
@@ -948,6 +1057,7 @@ public sealed class RunnerTests
                 timeout ?? TimeSpan.FromSeconds(ClaudeReviewRunner.DefaultTimeoutSeconds))
             {
                 ReadVariable = readVariable ?? Environment.GetEnvironmentVariable,
+                AfterProcessStart = afterProcessStart ?? (() => { }),
             };
         }
 

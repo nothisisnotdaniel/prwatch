@@ -32,6 +32,10 @@ internal sealed class StatusStore
     /// <summary>The full path of <c>status.json</c>.</summary>
     public string Path { get; }
 
+    /// <summary>Test-only: applied to every new status before it is saved, so a test can make an
+    /// <see cref="Update"/> throw. The identity in production; never set from config or a request.</summary>
+    internal Func<Status, Status> BeforeSave { get; set; } = status => status;
+
     /// <summary>The current status.</summary>
     public Status Current
     {
@@ -51,7 +55,7 @@ internal sealed class StatusStore
         ArgumentNullException.ThrowIfNull(change);
         lock (gate)
         {
-            Status next = change(current);
+            Status next = BeforeSave(change(current));
             try
             {
                 PrivateFileWriter.Write(Path, JsonSerializer.SerializeToUtf8Bytes(next, PrWatchJson.FileOptions));
