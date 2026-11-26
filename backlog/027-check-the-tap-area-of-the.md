@@ -12,4 +12,7 @@ review-ui 1 of job 426: probably fine (the reviewer saw no need to change it), b
 
 ## Notes
 
+A task for the user (26 Nov 2026): only a tap on the real iPhone can tell. If taps miss, add a new item to
+enlarge the switch's tap area to at least 44×44 pt.
+
 Proposed by job 426-web-app-ui.c82fa5db37484371aec59d93c2dd41e6 (`factory/jobs/426-web-app-ui.c82fa5db37484371aec59d93c2dd41e6/`).
