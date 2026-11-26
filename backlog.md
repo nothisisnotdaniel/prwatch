@@ -26,7 +26,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#17](backlog/017-set-needs-login-only-for-auth.md) Set needs_login only for auth failures, not for timeouts
 - [ ] [#18](backlog/018-kill-the-claude-process-when-the.md) Kill the claude process when the status update fails after start
 - [ ] [#19](backlog/019-stop-the-output-reads-when-a.md) Stop the output reads when a run is killed
-- [?] [#21](backlog/021-catch-every-write-error-when-saving.md) Catch every write error when saving the ledger and the status
+- [ ] [#21](backlog/021-catch-every-write-error-when-saving.md) Catch every write error when saving the ledger and the status
 - [?] [#22](backlog/022-show-a-new-request-in-the.md) Show a new request in the status even when a poll lands mid-write
 - [?] [#23](backlog/023-write-request-json-without-a-check.md) Write request.json without a check-then-write symlink window
 - [?] [#24](backlog/024-make-sure-job-py-pr-request.md) Make sure job.py pr request always consumes request.json
