@@ -13,3 +13,5 @@ Review-security 1 of job 430: provenance that a PR branch could also produce is 
 ## Notes
 
 Proposed by job 430-roomkit-signature-ci.0c91bd8ba359453e94f1e4c8273d544b (`factory/jobs/430-roomkit-signature-ci.0c91bd8ba359453e94f1e4c8273d544b/`).
+
+Folded into #34 on 26 Nov 2026 (the user's choice): the attestation check moves to the roomkit repo's release.yml, tightened there.
