@@ -52,3 +52,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#45](backlog/045-use-a-stored-sequence-instead-of.md) Use a stored sequence instead of the clock to tell whether a request was used
 - [?] [#46](backlog/046-compare-the-full-file-mode-in.md) Compare the full file mode in the release tarball check
 - [?] [#47](backlog/047-cap-member-count-and-total-size.md) Cap member count and total size in the release tarball check
+- [?] [#48](backlog/048-check-the-opened-marker-with-fstat.md) Check the opened marker with fstat instead of a separate fstatat
