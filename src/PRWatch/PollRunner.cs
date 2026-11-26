@@ -70,7 +70,8 @@ internal sealed class PollRunner
     public TimeSpan Timeout { get; }
 
     /// <summary>Test-only: awaited with the timeout token after the process has exited and both pipes are settled,
-    /// before the outcome is decided. Always <c>null</c> in production; never set from config or a request.</summary>
+    /// before the outcome is decided. Always <c>null</c> in production; never set from config or a request. Only the
+    /// tests set it (through <c>InternalsVisibleTo</c>).</summary>
     internal Func<CancellationToken, Task>? AfterExit { get; init; }
 
     /// <summary>A runner with the timeout from the config value <c>PollTimeoutSeconds</c> (default 120).</summary>
