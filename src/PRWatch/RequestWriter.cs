@@ -173,9 +173,9 @@ internal static class RequestWriter
             PrivateFileWriter.Write(file, bytes);
             return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-            or NotSupportedException or ArgumentException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // Any refusal or failure is the fixed write_failed; the exception's text is never shown or logged.
             return false;
         }
     }

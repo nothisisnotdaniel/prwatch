@@ -279,7 +279,8 @@ public sealed class RequestTests
     [Fact]
     public async Task AFailingWrite_Is500WriteFailed()
     {
-        if (OperatingSystem.IsWindows())
+        // chmod cannot stop root from writing, so the failure is only made for a normal user.
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root")
         {
             return;
         }
