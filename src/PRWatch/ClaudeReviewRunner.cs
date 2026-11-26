@@ -213,7 +213,12 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                 entry = ledger.Start(startedAt);
                 status.Update(previous => previous with
                 {
-                    Runs = previous.Runs.SetItem(key, new RunStatus { HeadSha = pick.HeadSha, StartedAt = startedAt }),
+                    Runs = previous.Runs.SetItem(key, new RunStatus
+                    {
+                        HeadSha = pick.HeadSha,
+                        StartedAt = startedAt,
+                        Request = pick.Request,
+                    }),
                     LastError = previous.LastError is { } error
                         && StatusError.RunCodes.Contains(error.Code, StringComparer.Ordinal)
                             ? null

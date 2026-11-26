@@ -84,10 +84,10 @@ internal sealed class StatusStore
     }
 
     /// <summary>The status in the file, or <see cref="Status.Initial"/> when it is missing or invalid. Invalid
-    /// <c>prs</c>, <c>skipped</c> or <c>pick</c> content loads as the empty value and the rest still loads, a brake
+    /// <c>prs</c>, <c>skipped</c>, <c>pick</c> or <c>taps</c> content loads as the empty value and the rest still loads, a brake
     /// without a reason from <see cref="TokenBrake.Reasons"/> loads as not holding;
     /// a <c>runs</c> key that is not <c>&lt;repo&gt;-&lt;n&gt;</c> (<see cref="PrRules.IsRunKey"/>) is
-    /// dropped.</summary>
+    /// dropped, and so is a run whose <c>request</c> is not one of <see cref="PrRules.Requests"/>.</summary>
     private static Status Load(string path)
     {
         byte[]? bytes = SafeFileReader.ReadBytes(path, MaxFileBytes);
@@ -106,6 +106,7 @@ internal sealed class StatusStore
             JsonNode? prs = Detach(top, "prs");
             JsonNode? skipped = Detach(top, "skipped");
             JsonNode? pick = Detach(top, "pick");
+            JsonNode? taps = Detach(top, "taps");
             Status? loaded = top.Deserialize<Status>(PrWatchJson.FileOptions);
             if (loaded is null || !IsValid(loaded))
             {
@@ -113,7 +114,7 @@ internal sealed class StatusStore
             }
 
             ImmutableSortedDictionary<string, RunStatus> runs = loaded.Runs
-                .Where(run => PrRules.IsRunKey(run.Key))
+                .Where(run => PrRules.IsRunKey(run.Key) && PrRules.IsRequest(run.Value.Request))
                 .ToImmutableSortedDictionary(run => run.Key, run => run.Value, StringComparer.Ordinal);
             return loaded with
             {
@@ -129,12 +130,28 @@ internal sealed class StatusStore
                 Pick = LoadPart<PickStatus>(pick, found => PrRules.IsProjectName(found.Project)
                     && PrRules.IsNumber(found.Number)
                     && PrRules.IsSha(found.HeadSha)),
+                Taps = LoadTaps(taps),
             };
         }
         catch (JsonException)
         {
             return Status.Initial;
         }
+    }
+
+    /// <summary>The taps in <paramref name="node"/>: at most <see cref="PrRules.MaxPrs"/>, each keyed
+    /// <c>&lt;repo&gt;-&lt;n&gt;</c> with an action from <see cref="PrRules.Requests"/> and a valid sha; anything
+    /// else loads as no taps at all.</summary>
+    private static ImmutableSortedDictionary<string, TapStatus> LoadTaps(JsonNode? node)
+    {
+        Dictionary<string, TapStatus>? taps = LoadPart<Dictionary<string, TapStatus>>(node, found =>
+            found.Count <= PrRules.MaxPrs
+            && found.All(tap => PrRules.IsRunKey(tap.Key)
+                && tap.Value is not null
+                && tap.Value.Action is not null
+                && PrRules.Requests.Contains(tap.Value.Action, StringComparer.Ordinal)
+                && PrRules.IsSha(tap.Value.HeadSha)));
+        return (taps ?? []).ToImmutableSortedDictionary(tap => tap.Key, tap => tap.Value, StringComparer.Ordinal);
     }
 
     private static JsonNode? Detach(JsonObject top, string name)

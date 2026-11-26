@@ -89,7 +89,7 @@ public sealed class PrViewTests
         Assert.Equal(
             "{\"project\":\"Alpha\",\"number\":12,\"title\":\"Title 12\",\"author\":\"someone\","
             + "\"url\":\"https://github.com/owner/repo/pull/12\",\"trusted\":true,\"headSha\":\"" + HeadA + "\","
-            + "\"stage\":\"review\",\"request\":null,"
+            + "\"stage\":\"review\",\"request\":null,\"requestUnused\":false,"
             + "\"round\":{\"k\":2,\"current\":true,\"clean\":true,\"tests\":\"pass\",\"mergeable\":true},"
             + "\"run\":{\"startedAt\":\"2026-11-26T09:50:00.000Z\",\"endedAt\":\"2026-11-26T09:58:00.000Z\","
             + "\"result\":\"ok\",\"costUsd\":0.42},\"actions\":[\"merge\",\"cancel\"]}",
@@ -97,7 +97,7 @@ public sealed class PrViewTests
         Assert.Equal(
             "{\"project\":\"Alpha\",\"number\":2,\"title\":\"Title 2\",\"author\":\"someone\","
             + "\"url\":\"https://github.com/owner/repo/pull/2\",\"trusted\":false,\"headSha\":\"" + HeadA + "\","
-            + "\"stage\":null,\"request\":\"review\",\"round\":null,\"run\":null,\"actions\":[]}",
+            + "\"stage\":null,\"request\":\"review\",\"requestUnused\":false,\"round\":null,\"run\":null,\"actions\":[]}",
             prs[0].GetRawText());
         Assert.Equal("[\"consent\"]", prs[2].GetProperty("actions").GetRawText());
     }
@@ -181,6 +181,64 @@ public sealed class PrViewTests
 
         Assert.Equal(expected, string.Join(",", actions));
         Assert.All(actions, action => Assert.Contains(action, PrActions.All));
+    }
+
+    // --- job 449: a request a run already used ----------------------------------------------------
+
+    [Theory]
+    [InlineData(false, "review", "none", "review", false)]
+    [InlineData(false, "merge", "current-clean", null, false)]
+    [InlineData(false, "cancel", "old", "review", false)]
+    [InlineData(false, "review", "current-clean-notests", null, false)]
+    [InlineData(true, "review", "current-clean", "review", false)]
+    [InlineData(true, "merge", "current-clean", null, true)]
+    [InlineData(true, "review", "old", null, false)]
+    public void For_AnUnusedRequest_GivesTheTapsOfThePrWithoutARequest(bool trusted, string request, string round,
+        string? stage, bool autoMergeTrusted)
+    {
+        RoundStatus? rounds = round switch
+        {
+            "none" => null,
+            "current-clean" => new RoundStatus { K = 1, HeadSha = HeadA, Current = true, Clean = true, Tests = "pass" },
+            "current-clean-notests" => new RoundStatus { K = 1, HeadSha = HeadA, Current = true, Clean = true },
+            _ => new RoundStatus { K = 1, HeadSha = HeadB, Current = false, Clean = true, Tests = "pass" },
+        };
+        PrStatus plain = Pr("Alpha", 1, trusted, rounds) with { Stage = stage };
+        Settings settings = new() { AutoMergeTrusted = autoMergeTrusted };
+
+        IReadOnlyList<string> waiting = PrActions.For(plain with { Request = request }, settings);
+        IReadOnlyList<string> unused = PrActions.For(plain with { Request = request, RequestUnused = true }, settings);
+
+        Assert.Empty(waiting);
+        Assert.Equal(PrActions.For(plain, settings), unused);
+    }
+
+    [Fact]
+    public async Task Get_ShowsRequestUnused_AndTheTapsOfAnUnusedRequest()
+    {
+        using PrWatchFactory factory = new();
+        Status status = new()
+        {
+            LastPoll = Now,
+            Prs =
+            [
+                Pr("Alpha", 1, trusted: false) with { Request = "review", RequestUnused = true },
+                Pr("Alpha", 2, trusted: false) with { Request = "review" },
+            ],
+        };
+        WriteStatus(factory, status);
+        using HttpClient client = await Start(factory);
+
+        using JsonDocument document = JsonDocument.Parse(await client.GetStringAsync(Route));
+        using JsonDocument full = JsonDocument.Parse(await client.GetStringAsync("/api/status"));
+
+        JsonElement[] prs = [.. document.RootElement.GetProperty("prs").EnumerateArray()];
+        Assert.True(prs[0].GetProperty("requestUnused").GetBoolean());
+        Assert.Equal("[\"consent\"]", prs[0].GetProperty("actions").GetRawText());
+        Assert.False(prs[1].GetProperty("requestUnused").GetBoolean());
+        Assert.Equal("[]", prs[1].GetProperty("actions").GetRawText());
+        JsonElement[] stored = [.. full.RootElement.GetProperty("prs").EnumerateArray()];
+        Assert.Equal([true, false], stored.Select(pr => pr.GetProperty("requestUnused").GetBoolean()));
     }
 
     private static PrStatus Pr(string project, int number, bool trusted = true, RoundStatus? round = null)

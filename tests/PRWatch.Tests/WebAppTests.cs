@@ -294,6 +294,25 @@ public sealed partial class WebAppTests
     }
 
     [Fact]
+    public void AppJs_ShowsAFixedTextForAnUnusedRequest_ThroughTextContent_InPlaceOfTheWaitingLine()
+    {
+        string app = RepoFiles.Read("src/PRWatch/wwwroot/app.js");
+
+        Assert.Contains(
+            "const RequestUnused = \"The last run did not use this request. Tap again to send it once more.\";",
+            app, StringComparison.Ordinal);
+        Assert.Contains(
+            "  if (pr.request && pr.requestUnused === true) {\n"
+            + "    row.append(element(\"p\", \"pr-request\", RequestUnused));\n"
+            + "  } else if (pr.request) {\n"
+            + "    row.append(element(\"p\", \"pr-request\", textFor(Requests, pr.request, Fallback)));\n"
+            + "  }",
+            app, StringComparison.Ordinal);
+        // element() sets its text through textContent only.
+        Assert.Contains("node.textContent = text;", app, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AppJs_HasAFixedTextForEveryStatusCode()
     {
         string app = RepoFiles.Read("src/PRWatch/wwwroot/app.js");

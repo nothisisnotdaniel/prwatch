@@ -12,7 +12,7 @@ public sealed class StatusTests
     private const string Route = "/api/status";
 
     private const string Initial =
-        "{\"lastPoll\":null,\"runs\":{},\"prs\":[],\"skipped\":[],\"pick\":null,"
+        "{\"lastPoll\":null,\"runs\":{},\"taps\":{},\"prs\":[],\"skipped\":[],\"pick\":null,"
         + "\"brake\":{\"holding\":false,\"reason\":null,\"until\":null},"
         + "\"login\":{\"state\":\"unknown\",\"credentialExpiresAt\":null,\"expiresSoon\":false},"
         + "\"planUsage\":null,\"updateLock\":null,\"lastError\":null}";
@@ -56,8 +56,8 @@ public sealed class StatusTests
 
         Assert.Equal(
             "{\"lastPoll\":\"2026-11-26T10:00:00.000Z\",\"runs\":{\"Alpha-12\":{\"headSha\":\"abc123\","
-            + "\"startedAt\":\"2026-11-26T09:57:00.000Z\",\"endedAt\":\"2026-11-26T10:00:00.000Z\",\"exitCode\":0,"
-            + "\"result\":\"clean\",\"costUsd\":null,\"isError\":null,\"modelUsage\":null}},\"prs\":[],\"skipped\":[],\"pick\":null,\"brake\":{\"holding\":true,\"reason\":\"runs_per_hour\","
+            + "\"startedAt\":\"2026-11-26T09:57:00.000Z\",\"request\":null,\"endedAt\":\"2026-11-26T10:00:00.000Z\",\"exitCode\":0,"
+            + "\"result\":\"clean\",\"costUsd\":null,\"isError\":null,\"modelUsage\":null}},\"taps\":{},\"prs\":[],\"skipped\":[],\"pick\":null,\"brake\":{\"holding\":true,\"reason\":\"runs_per_hour\","
             + "\"until\":\"2026-11-26T11:00:00.000Z\"},\"login\":{\"state\":\"ok\","
             + "\"credentialExpiresAt\":\"2026-12-26T10:00:00.000Z\",\"expiresSoon\":false},\"planUsage\":null,"
             + "\"updateLock\":null,\"lastError\":null}",
@@ -239,6 +239,92 @@ public sealed class StatusTests
         {
             Directory.Delete(folder, recursive: true);
         }
+    }
+
+    // --- job 449: runs with their request and the taps -------------------------------------------
+
+    [Fact]
+    public void RunAndTap_SurviveARestart()
+    {
+        using TempFolder folder = new();
+        string head = new('a', 40);
+        DateTimeOffset at = FakeClock.DefaultNow.AddMinutes(-20);
+        StatusStore store = new(folder.Path, new FakeClock(FakeClock.DefaultNow));
+        store.Update(status => status with
+        {
+            Runs = status.Runs.SetItem("Alpha-4", new RunStatus { HeadSha = head, StartedAt = at, Request = "merge" }),
+            Taps = status.Taps.SetItem("Alpha-4", new TapStatus { Action = "merge", HeadSha = head, At = at }),
+        });
+
+        Status loaded = new StatusStore(folder.Path, new FakeClock(FakeClock.DefaultNow)).Current;
+
+        Assert.Equal("merge", loaded.Runs["Alpha-4"].Request);
+        Assert.Equal(new TapStatus { Action = "merge", HeadSha = head, At = at }, Assert.Single(loaded.Taps).Value);
+    }
+
+    [Theory]
+    [InlineData("bad-sha")]
+    [InlineData("unknown-action")]
+    [InlineData("missing-action")]
+    [InlineData("null-tap")]
+    [InlineData("bad-key")]
+    [InlineData("bad-time")]
+    [InlineData("too-many")]
+    [InlineData("array")]
+    [InlineData("string")]
+    [InlineData("extra-field")]
+    public void InvalidTaps_LoadAsEmpty_AndKeepRunsAndPrs(string how)
+    {
+        using TempFolder folder = new();
+        string head = new('a', 40);
+        string Tap(string action, string sha, string at = "2026-11-26T09:00:00.000Z") =>
+            "{\"action\":\"" + action + "\",\"headSha\":\"" + sha + "\",\"at\":\"" + at + "\"}";
+        string taps = how switch
+        {
+            "bad-sha" => "{\"Alpha-4\":" + Tap("review", head.ToUpperInvariant()) + "}",
+            "unknown-action" => "{\"Alpha-4\":" + Tap("consent", head) + "}",
+            "missing-action" => "{\"Alpha-4\":{\"headSha\":\"" + head + "\",\"at\":\"2026-11-26T09:00:00.000Z\"}}",
+            "null-tap" => "{\"Alpha-4\":null}",
+            "bad-key" => "{\"Alpha-0\":" + Tap("review", head) + "}",
+            "bad-time" => "{\"Alpha-4\":" + Tap("review", head, "yesterday") + "}",
+            "too-many" => "{" + string.Join(",", Enumerable.Range(1, PrRules.MaxPrs + 1)
+                .Select(n => "\"Alpha-" + n + "\":" + Tap("review", head))) + "}",
+            "array" => "[" + Tap("review", head) + "]",
+            "string" => "\"Alpha-4\"",
+            _ => "{\"Alpha-4\":{\"action\":\"review\",\"headSha\":\"" + head
+                + "\",\"at\":\"2026-11-26T09:00:00.000Z\",\"x\":1}}",
+        };
+        File.WriteAllText(Path.Combine(folder.Path, "status.json"),
+            "{\"lastPoll\":\"2026-11-26T09:00:00.000Z\","
+            + "\"runs\":{\"Alpha-4\":{\"headSha\":\"" + head + "\",\"startedAt\":\"2026-11-26T09:00:00.000Z\","
+            + "\"request\":\"review\"}},"
+            + "\"taps\":" + taps + ","
+            + "\"prs\":[{\"project\":\"Alpha\",\"number\":4,"
+            + "\"title\":\"T\",\"author\":\"a\",\"url\":null,\"headSha\":\"" + head + "\","
+            + "\"headSeenAt\":\"2026-11-26T08:00:00.000Z\",\"trusted\":false,\"request\":\"review\","
+            + "\"requestUnused\":true,\"round\":null}]}");
+
+        Status loaded = new StatusStore(folder.Path, new FakeClock(FakeClock.DefaultNow)).Current;
+
+        Assert.Empty(loaded.Taps);
+        Assert.Equal("review", loaded.Runs["Alpha-4"].Request);
+        PrStatus pr = Assert.Single(loaded.Prs);
+        Assert.True(pr.RequestUnused);
+        Assert.Equal(FakeClock.DefaultNow.AddHours(-1), loaded.LastPoll);
+    }
+
+    [Fact]
+    public void ARunWithAnUnknownRequest_IsDropped()
+    {
+        using TempFolder folder = new();
+        string head = new('a', 40);
+        File.WriteAllText(Path.Combine(folder.Path, "status.json"),
+            "{\"runs\":{\"Alpha-4\":{\"headSha\":\"" + head + "\",\"request\":\"consent\"},"
+            + "\"Alpha-5\":{\"headSha\":\"" + head + "\",\"request\":null}}}");
+
+        Status loaded = new StatusStore(folder.Path, new FakeClock(FakeClock.DefaultNow)).Current;
+
+        Assert.Equal(["Alpha-5"], loaded.Runs.Keys);
     }
 
     [Fact]

@@ -16,6 +16,11 @@ internal sealed record Status
     public ImmutableSortedDictionary<string, RunStatus> Runs { get; init; } =
         ImmutableSortedDictionary.Create<string, RunStatus>(StringComparer.Ordinal);
 
+    /// <summary>The user's last tap per PR (keyed like <see cref="Runs"/>, the latest wins): what makes a request
+    /// count again after a run used it (<see cref="Watcher.IsRequestUsed"/>).</summary>
+    public ImmutableSortedDictionary<string, TapStatus> Taps { get; init; } =
+        ImmutableSortedDictionary.Create<string, TapStatus>(StringComparer.Ordinal);
+
     public IReadOnlyList<PrStatus> Prs { get; init; } = [];
 
     public IReadOnlyList<SkipStatus> Skipped { get; init; } = [];
@@ -63,6 +68,9 @@ internal sealed record RunStatus
 
     public DateTimeOffset? StartedAt { get; init; }
 
+    /// <summary>The request handed to the run (one of <see cref="PrRules.Requests"/>), or <c>null</c>.</summary>
+    public string? Request { get; init; }
+
     public DateTimeOffset? EndedAt { get; init; }
 
     public int? ExitCode { get; init; }
@@ -74,6 +82,17 @@ internal sealed record RunStatus
     public bool? IsError { get; init; }
 
     public IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>>? ModelUsage { get; init; }
+}
+
+/// <summary>One tap of the user: the action (one of <see cref="PrRules.Requests"/>), the head it named and when
+/// PRWatch wrote it (the clock's time).</summary>
+internal sealed record TapStatus
+{
+    public required string Action { get; init; }
+
+    public required string HeadSha { get; init; }
+
+    public required DateTimeOffset At { get; init; }
 }
 
 /// <summary>The Claude plan usage from a run's last <c>rate_limit_event</c>: the five-hour and seven-day windows,
@@ -119,6 +138,10 @@ internal sealed record PrStatus
     public required bool Trusted { get; init; }
 
     public string? Request { get; init; }
+
+    /// <summary>True when the last run already used <see cref="Request"/> (the file was left behind): the PR is
+    /// judged as if it had no request until the user taps again.</summary>
+    public bool RequestUnused { get; init; }
 
     public RoundStatus? Round { get; init; }
 

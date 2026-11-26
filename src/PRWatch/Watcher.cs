@@ -106,10 +106,16 @@ internal sealed class Watcher : BackgroundService
                 Brake = TokenBrake.Evaluate(previous.PlanUsage, entries, current, now),
                 Runs = previous.Runs.RemoveRange(
                     previous.Runs.Keys.Where(key => !known.Contains(PrRules.RunKeyProject(key))).ToList()),
+                Taps = previous.Taps.RemoveRange(
+                    previous.Taps.Keys.Where(key => !known.Contains(PrRules.RunKeyProject(key))).ToList()),
                 LastError = previous.LastError is { } error
                     && StatusError.PollCodes.Contains(error.Code, StringComparer.Ordinal)
                         ? null
                         : previous.LastError,
+            };
+            next = next with
+            {
+                Prs = [.. next.Prs.Select(pr => pr with { RequestUnused = IsRequestUsed(next, pr) })],
             };
             pick = runnerBusy ? null : Choose(next, current, active, now);
             return next with
@@ -141,7 +147,8 @@ internal sealed class Watcher : BackgroundService
     /// <summary>The first PR in <c>prs</c> order that needs a run now, or <c>null</c> (also while the brake
     /// holds or the login is needed). A PR with a <c>review</c>, <c>merge</c> or <c>cancel</c> request is picked
     /// past the round, trust and same-head rules, but never during the quiet time or while a job of its project is
-    /// active.</summary>
+    /// active. A request a run already used (<see cref="IsRequestUsed"/>) skips no rule: the PR is judged, and
+    /// handed on, as if it had no request.</summary>
     public static ReviewPick? Choose(Status status, Settings settings, IReadOnlySet<string> activeProjects,
         DateTimeOffset now)
     {
@@ -163,7 +170,11 @@ internal sealed class Watcher : BackgroundService
 
             // A request is the user's tap for this head: it is handed to the run even when the round is current,
             // the author is untrusted, auto-review is off or a run already ran for this head.
-            bool requested = pr.Request is not null && PrRules.Requests.Contains(pr.Request, StringComparer.Ordinal);
+            // Each tap starts at most one run: once a run used the request, a request file left behind (a failed
+            // `job.py pr request`, a run that never reached it) counts for nothing until the user taps again.
+            bool requested = pr.Request is not null
+                && PrRules.Requests.Contains(pr.Request, StringComparer.Ordinal)
+                && !IsRequestUsed(status, pr);
             if (!requested
                 && (pr.Round is { Current: true } || !(pr.Trusted && settings.AutoReviewTrusted)))
             {
@@ -177,10 +188,34 @@ internal sealed class Watcher : BackgroundService
                 continue;
             }
 
-            return new ReviewPick(pr.Project, pr.Number, pr.HeadSha, pr.Trusted, pr.Request);
+            return new ReviewPick(pr.Project, pr.Number, pr.HeadSha, pr.Trusted, requested ? pr.Request : null);
         }
 
         return null;
+    }
+
+    /// <summary>True when <paramref name="pr"/> has a request that a run already used: the PR's last run was
+    /// handed a request, for the PR's head, and started no earlier than the PR's last tap (or there is no
+    /// tap).</summary>
+    public static bool IsRequestUsed(Status status, PrStatus pr)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        ArgumentNullException.ThrowIfNull(pr);
+        if (pr.Request is null)
+        {
+            return false;
+        }
+
+        string key = PrRules.RunKey(pr.Project, pr.Number);
+        if (!status.Runs.TryGetValue(key, out RunStatus? run)
+            || run.Request is null
+            || run.HeadSha != pr.HeadSha)
+        {
+            return false;
+        }
+
+        return !status.Taps.TryGetValue(key, out TapStatus? tap)
+            || (run.StartedAt is { } started && started >= tap.At);
     }
 
     /// <summary>Notes a request just written by <c>POST /api/prs/&lt;action&gt;</c>, so that a poll that started

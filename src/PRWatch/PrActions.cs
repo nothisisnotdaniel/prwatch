@@ -12,7 +12,8 @@ internal static class PrActions
 
     public static readonly string[] All = [Consent, Merge, Cancel];
 
-    /// <summary>No tap while a request is waiting. Otherwise <c>consent</c> for an untrusted author whose round
+    /// <summary>No tap while a request is waiting (a request a run already used, <c>requestUnused</c>, waits for
+    /// nothing: its PR gets the taps it would have without it). Otherwise <c>consent</c> for an untrusted author whose round
     /// is missing, not current or has no tests verdict; <c>merge</c> for a current clean round unless a trusted
     /// author's round merges on its own (<c>autoMergeTrusted</c>); <c>cancel</c> while the PR is in
     /// <c>review</c>.</summary>
@@ -20,7 +21,7 @@ internal static class PrActions
     {
         ArgumentNullException.ThrowIfNull(pr);
         ArgumentNullException.ThrowIfNull(settings);
-        if (pr.Request is not null)
+        if (pr.Request is not null && !pr.RequestUnused)
         {
             return [];
         }

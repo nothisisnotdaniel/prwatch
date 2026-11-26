@@ -167,6 +167,9 @@ const Requests = {
   cancel: "Cancel requested, waiting for the next poll.",
 };
 
+// Shown for a request the last run already used (requestUnused): only a new tap sends it again.
+const RequestUnused = "The last run did not use this request. Tap again to send it once more.";
+
 const Fallback = "unknown";
 
 const NumberFields = [
@@ -423,7 +426,9 @@ function prRow(pr) {
   if (run) {
     row.append(element("p", "pr-run", run));
   }
-  if (pr.request) {
+  if (pr.request && pr.requestUnused === true) {
+    row.append(element("p", "pr-request", RequestUnused));
+  } else if (pr.request) {
     row.append(element("p", "pr-request", textFor(Requests, pr.request, Fallback)));
   }
 
