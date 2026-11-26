@@ -27,3 +27,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [?] [#18](backlog/018-kill-the-claude-process-when-the.md) Kill the claude process when the status update fails after start
 - [?] [#19](backlog/019-stop-the-output-reads-when-a.md) Stop the output reads when a run is killed
 - [?] [#20](backlog/020-close-the-time-of-check-time.md) Close the time-of-check/time-of-use gap when starting claude
+- [?] [#21](backlog/021-catch-every-write-error-when-saving.md) Catch every write error when saving the ledger and the status
