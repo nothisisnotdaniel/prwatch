@@ -31,7 +31,15 @@ public sealed class RunnerTests
     public async Task Start_RunsTheResolvedClaude_WithTheArgvCwdStdinAndOnlyTheFixedEnvironment(string? mode,
         string model)
     {
-        using Rig rig = new();
+        Dictionary<string, string> variables = new(StringComparer.Ordinal)
+        {
+            ["HOME"] = "/h-test",
+            ["USER"] = "u-test",
+            ["TMPDIR"] = "/t-test",
+            [Secret] = "do-not-pass",
+            ["PRWATCH_TEST_SECRET"] = "do-not-pass",
+        };
+        using Rig rig = new(readVariable: name => variables.TryGetValue(name, out string? value) ? value : null);
         if (mode is not null)
         {
             rig.Watch.Change("{\"reviewerMode\":\"" + mode + "\"}");
@@ -39,26 +47,8 @@ public sealed class RunnerTests
 
         rig.Watch.Change("{\"maxBudgetUsd\":0.5}");
         FakeClaude.SetStream(rig.Claude, Result());
-        string variable = "PRWATCH_TEST_SECRET_" + Guid.NewGuid().ToString("N");
-        bool setSecret = Environment.GetEnvironmentVariable(Secret) is null;
-        Environment.SetEnvironmentVariable(variable, "do-not-pass");
-        if (setSecret)
-        {
-            Environment.SetEnvironmentVariable(Secret, "do-not-pass");
-        }
 
-        try
-        {
-            Assert.True(rig.Runner.TryStart(Alpha1));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(variable, null);
-            if (setSecret)
-            {
-                Environment.SetEnvironmentVariable(Secret, null);
-            }
-        }
+        Assert.True(rig.Runner.TryStart(Alpha1));
 
         await rig.WaitForEnd("Alpha-1");
         JsonElement call = Assert.Single(rig.Calls());
@@ -73,35 +63,66 @@ public sealed class RunnerTests
         Assert.Equal("", call.GetProperty("stdin").GetString());
 
         JsonElement env = call.GetProperty("env");
-        string tmp = Environment.GetEnvironmentVariable("TMPDIR") is { Length: > 0 } own
-            ? own
-            : Path.TrimEndingDirectorySeparator(Path.GetTempPath());
-        Assert.Equal(tmp, env.GetProperty("TMPDIR").GetString());
+        Assert.Equal("/h-test", env.GetProperty("HOME").GetString());
+        Assert.Equal("u-test", env.GetProperty("USER").GetString());
+        Assert.Equal("/t-test", env.GetProperty("TMPDIR").GetString());
         Assert.Equal(prs, env.GetProperty("FACTORY_PRS_DIR").GetString());
         Assert.Equal("1", env.GetProperty("FACTORY_PR_HEADLESS").GetString());
         Assert.Equal(PollRunner.FixedPath, env.GetProperty("PATH").GetString());
-        foreach (string name in new[] { "HOME", "USER" })
+        AssertOnlyTheFixedEnvironment(env);
+        Assert.False(env.TryGetProperty(Secret, out _));
+        Assert.False(env.TryGetProperty("PRWATCH_TEST_SECRET", out _));
+        Assert.False(Directory.Exists(prs));
+    }
+
+    [Fact]
+    public async Task Start_WithAReaderThatReturnsNothing_PassesNoHomeOrUser_AndTheTempPathAsTmpdir()
+    {
+        using Rig rig = new(readVariable: name => name == "USER" ? null : "");
+        FakeClaude.SetStream(rig.Claude, Result());
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+
+        await rig.WaitForEnd("Alpha-1");
+        JsonElement env = Assert.Single(rig.Calls()).GetProperty("env");
+        Assert.False(env.TryGetProperty("HOME", out _));
+        Assert.False(env.TryGetProperty("USER", out _));
+        Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetTempPath()), env.GetProperty("TMPDIR").GetString());
+        Assert.Equal(Path.Combine(rig.Watch.Folder, "root-factory-prs"), env.GetProperty("FACTORY_PRS_DIR").GetString());
+        Assert.Equal("1", env.GetProperty("FACTORY_PR_HEADLESS").GetString());
+        Assert.Equal(PollRunner.FixedPath, env.GetProperty("PATH").GetString());
+        AssertOnlyTheFixedEnvironment(env);
+    }
+
+    [Fact]
+    public async Task Start_WithoutAReader_PassesOnTheProcessHome()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, Result());
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+
+        await rig.WaitForEnd("Alpha-1");
+        JsonElement env = Assert.Single(rig.Calls()).GetProperty("env");
+        if (Environment.GetEnvironmentVariable("HOME") is { Length: > 0 } home)
         {
-            if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
-            {
-                Assert.Equal(value, env.GetProperty(name).GetString());
-            }
-            else
-            {
-                Assert.False(env.TryGetProperty(name, out _));
-            }
+            Assert.Equal(home, env.GetProperty("HOME").GetString());
         }
 
+        Assert.Equal(PollRunner.FixedPath, env.GetProperty("PATH").GetString());
+        AssertOnlyTheFixedEnvironment(env);
+    }
+
+    /// <summary>Asserts that <paramref name="env"/> holds only the fixed allow-list and the python3 shim's own
+    /// variables.</summary>
+    private static void AssertOnlyTheFixedEnvironment(JsonElement env)
+    {
         string[] allowed = ["HOME", "USER", "TMPDIR", "FACTORY_PRS_DIR", "FACTORY_PR_HEADLESS", "PATH"];
         foreach (JsonProperty property in env.EnumerateObject())
         {
             Assert.True(allowed.Contains(property.Name) || InterpreterVariables.Contains(property.Name),
                 "passed on: " + property.Name);
         }
-
-        Assert.False(env.TryGetProperty(Secret, out _));
-        Assert.False(env.TryGetProperty(variable, out _));
-        Assert.False(Directory.Exists(prs));
     }
 
     // --- AC-4: the claude path check -------------------------------------------------------------
@@ -830,7 +851,9 @@ public sealed class RunnerTests
     /// <see cref="UpdateLock"/> in the data folder.</summary>
     private sealed class Rig : IDisposable
     {
-        public Rig(TimeSpan? timeout = null)
+        /// <param name="readVariable">The runner's environment reader (<see cref="ClaudeReviewRunner.ReadVariable"/>);
+        /// <c>null</c> keeps the real process environment.</param>
+        public Rig(TimeSpan? timeout = null, Func<string, string?>? readVariable = null)
         {
             Watch = new WatcherRig();
             CallsFile = Path.Combine(Watch.Folder, "claude-calls.jsonl");
@@ -838,7 +861,10 @@ public sealed class RunnerTests
             Watch.Change("{\"enabled\":true,\"claudePath\":" + JsonSerializer.Serialize(Claude) + "}");
             Lock = new UpdateLock(Watch.DataFolder);
             Runner = new ClaudeReviewRunner(Watch.Settings, Watch.Status, Watch.Ledger, Watch.Clock, Lock,
-                timeout ?? TimeSpan.FromSeconds(ClaudeReviewRunner.DefaultTimeoutSeconds));
+                timeout ?? TimeSpan.FromSeconds(ClaudeReviewRunner.DefaultTimeoutSeconds))
+            {
+                ReadVariable = readVariable ?? Environment.GetEnvironmentVariable,
+            };
         }
 
         public WatcherRig Watch { get; }

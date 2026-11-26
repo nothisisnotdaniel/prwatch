@@ -74,6 +74,11 @@ internal sealed class PollRunner
     /// tests set it (through <c>InternalsVisibleTo</c>).</summary>
     internal Func<CancellationToken, Task>? AfterExit { get; init; }
 
+    /// <summary>Test-only: reads the <see cref="PassedVariables"/> from PRWatch's own environment. Always
+    /// <see cref="Environment.GetEnvironmentVariable(string)"/> in production; never set from config or a request.
+    /// Only the tests set it (through <c>InternalsVisibleTo</c>), so they never write the process environment.</summary>
+    internal Func<string, string?> ReadVariable { get; init; } = Environment.GetEnvironmentVariable;
+
     /// <summary>A runner with the timeout from the config value <c>PollTimeoutSeconds</c> (default 120).</summary>
     public static PollRunner FromConfiguration(IConfiguration configuration)
     {
@@ -130,7 +135,7 @@ internal sealed class PollRunner
         start.Environment.Clear();
         foreach (string name in PassedVariables)
         {
-            string? value = Environment.GetEnvironmentVariable(name);
+            string? value = ReadVariable(name);
             if (!string.IsNullOrEmpty(value))
             {
                 start.Environment[name] = value;
