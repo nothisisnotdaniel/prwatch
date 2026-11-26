@@ -24,7 +24,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#14](backlog/014-decide-whether-the-projects-setting-filters.md) Decide whether the projects setting filters factory PRs (after: #3) → 433-projects-filter-factory-prs.89a797ae58af4ecbbdfe5ffee4d07514
 - [x] [#15](backlog/015-report-a-clean-exit-that-races.md) Report a clean exit that races the poll timeout as success → 436-poll-clean-exit-race.ee8d9b0d25a84c40a393b4ab960d21a7
 - [x] [#16](backlog/016-stop-a-test-from-changing-process.md) Stop a test from changing process-wide environment variables → 437-test-env-hook.76d2e56cfedd4e1a8085d51d667af006
-- [ ] [#17](backlog/017-set-needs-login-only-for-auth.md) Set needs_login only for auth failures, not for timeouts
+- [x] [#17](backlog/017-set-needs-login-only-for-auth.md) Set needs_login only for auth failures, not for timeouts → 439-needs-login-auth-only.7a04b79dac2a45bbbd35f48f71acc60d
 - [ ] [#18](backlog/018-kill-the-claude-process-when-the.md) Kill the claude process when the status update fails after start
 - [ ] [#19](backlog/019-stop-the-output-reads-when-a.md) Stop the output reads when a run is killed
 - [ ] [#21](backlog/021-catch-every-write-error-when-saving.md) Catch every write error when saving the ledger and the status
