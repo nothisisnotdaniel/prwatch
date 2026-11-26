@@ -27,7 +27,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   folder, `--TokenFile=<temp>/PRWatch/access-token`, `--environment=Production`, `Host: 127.0.0.1:8101`).
   Before the first `dotnet build` or `dotnet test` on a Mac (and after a RoomKit version bump), run
   `scripts/restore.sh` once (README "RoomKit"). It reads a classic PAT with only `read:packages` from the keychain
-  (service `prwatch-github-packages`) or from `~/Library/Application Support/PRWatch/github-packages` (0600) and sets
+  (service `prwatch-github-packages`, stored with `-T ''` so every read shows a prompt; a denied prompt exits 1) or
+  from `~/Library/Application Support/PRWatch/github-packages` (0600, but readable by any code running as the user) and sets
   `NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>` for that one `dotnet restore` only. The PAT
   is never committed (no `packageSourceCredentials` in `nuget.config`) and never exported globally: a shell
   profile export would hand it to every process, including `/factory pr` test runs of untrusted PR code. CI uses
