@@ -4,50 +4,58 @@ using System.Xml.Linq;
 
 namespace PRWatch.Tests;
 
-/// <summary>The repo's build files, <c>Program.cs</c>, the options and the CI workflow, read as text.</summary>
+/// <summary>The repo's build files, <c>Program.cs</c>, the options, the docs and the CI workflow, read as text.</summary>
 public sealed class ProjectFilesTests
 {
     [Fact]
-    public void NugetConfig_MapsRoomKitOnlyToTheFolderFeed()
+    public void NugetConfig_MapsRoomKitOnlyToGitHubPackages()
     {
-        XDocument config = XDocument.Parse(RepoFiles.Read("nuget.config"));
+        string text = RepoFiles.Read("nuget.config");
+        XDocument config = XDocument.Parse(text);
         XElement sources = config.Root!.Element("packageSources")!;
 
         Assert.Equal("clear", sources.Elements().First().Name.LocalName);
         Dictionary<string, string> byKey = sources.Elements("add")
             .ToDictionary(add => (string)add.Attribute("key")!, add => (string)add.Attribute("value")!);
-        Assert.Equal(["nuget.org", "roomkit"], byKey.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(2, sources.Elements("add").Count());
+        Assert.Equal(["github", "nuget.org"], byKey.Keys.Order(StringComparer.Ordinal));
         Assert.Equal("https://api.nuget.org/v3/index.json", byKey["nuget.org"]);
-        Assert.Equal("%HOME%/Library/Application Support/RoomKit/feed", byKey["roomkit"]);
+        Assert.Equal("https://nuget.pkg.github.com/nothisisnotdaniel/index.json", byKey["github"]);
 
         Dictionary<string, string[]> mapping = config.Root!.Element("packageSourceMapping")!.Elements("packageSource")
             .ToDictionary(
                 source => (string)source.Attribute("key")!,
                 source => source.Elements("package").Select(package => (string)package.Attribute("pattern")!).ToArray());
-        Assert.Equal(["RoomKit"], mapping["roomkit"]);
+        Assert.Equal(["RoomKit"], mapping["github"]);
         Assert.Equal(["*"], mapping["nuget.org"]);
         Assert.Equal(2, mapping.Count);
+        Assert.Null(config.Root!.Element("packageSourceCredentials"));
+        Assert.DoesNotContain("<packageSourceCredentials", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Password", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Library/Application Support", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("%HOME%", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("ControlRoom", text, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Csproj_PinsRoomKitToExactly030()
+    public void Csproj_PinsRoomKitToExactly010()
     {
         XDocument project = XDocument.Parse(RepoFiles.Read("src/PRWatch/PRWatch.csproj"));
 
         XElement[] references = [.. project.Descendants("PackageReference")];
         XElement roomKit = Assert.Single(references);
         Assert.Equal("RoomKit", (string?)roomKit.Attribute("Include"));
-        Assert.Equal("[0.3.0]", (string?)roomKit.Attribute("Version"));
+        Assert.Equal("[0.1.0]", (string?)roomKit.Attribute("Version"));
         Assert.Equal("Microsoft.NET.Sdk.Web", (string?)project.Root!.Attribute("Sdk"));
     }
 
     [Fact]
-    public void RoomKit_IsTheRestoredPackage030()
+    public void RoomKit_IsTheRestoredPackage010()
     {
         Assembly roomKit = typeof(RoomKitApp).Assembly;
 
         Assert.Equal(
-            "0.3.0",
+            "0.1.0",
             roomKit.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
     }
 
@@ -99,10 +107,24 @@ public sealed class ProjectFilesTests
         string ci = RepoFiles.Read(".github/workflows/ci.yml");
 
         Assert.Contains("on:\n  push:\n  pull_request:\n", ci, StringComparison.Ordinal);
-        Assert.Contains("permissions:\n  contents: read\n", ci, StringComparison.Ordinal);
+        Assert.Contains("\npermissions:\n  contents: read\n\njobs:\n", ci, StringComparison.Ordinal);
         Assert.DoesNotContain("write", ci, StringComparison.Ordinal);
         Assert.Contains("runs-on: macos-15", ci, StringComparison.Ordinal);
         Assert.Contains("persist-credentials: false", ci, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ci_TestJob_ReadsContentsAndPackagesOnly()
+    {
+        string ci = RepoFiles.Read(".github/workflows/ci.yml");
+
+        Assert.Contains(
+            "\n  test:\n    name: Build and test\n    runs-on: macos-15\n" +
+                "    # GitHub Packages needs a token even to read RoomKit; only the Restore step gets it.\n" +
+                "    permissions:\n      contents: read\n      packages: read\n    timeout-minutes: 30\n",
+            ci,
+            StringComparison.Ordinal);
+        Assert.Equal(2, ci.Split('\n').Count(line => line.TrimStart().StartsWith("permissions:", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -120,23 +142,81 @@ public sealed class ProjectFilesTests
     }
 
     [Fact]
-    public void Ci_DownloadsAndVerifiesRoomKit_ThenBuildsAndTests()
+    public void Ci_RestoresThenChecksRoomKit_ThenBuildsAndTestsWithoutRestoring()
     {
         string ci = RepoFiles.Read(".github/workflows/ci.yml");
 
-        Assert.Contains("GH_TOKEN: ${{ github.token }}", ci, StringComparison.Ordinal);
-        Assert.Contains("src/PRWatch/PRWatch.csproj", ci, StringComparison.Ordinal);
-        Assert.Contains(
-            "gh release download \"v$version\" --repo nothisisnotdaniel/controlroom", ci, StringComparison.Ordinal);
-        Assert.Contains("--pattern \"RoomKit.$version.nupkg\" --pattern SHA256SUMS", ci, StringComparison.Ordinal);
-        Assert.Contains("shasum -a 256", ci, StringComparison.Ordinal);
-        Assert.Contains("[ \"$expected\" != \"$actual\" ]", ci, StringComparison.Ordinal);
-        Assert.Contains("$HOME/Library/Application Support/RoomKit/feed", ci, StringComparison.Ordinal);
-        int download = ci.IndexOf("gh release download", StringComparison.Ordinal);
-        int check = ci.IndexOf("shasum -a 256", StringComparison.Ordinal);
-        int build = ci.IndexOf("run: dotnet build -warnaserror", StringComparison.Ordinal);
-        int test = ci.IndexOf("run: dotnet test", StringComparison.Ordinal);
-        Assert.True(download < check && check < build && build < test);
+        AssertInOrder(
+            ci,
+            [
+                "      - name: Restore\n        env:\n          " + Credential + "\n        run: dotnet restore\n",
+                "      - name: Check the RoomKit package\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |\n",
+                "      - name: Build\n        run: dotnet build -warnaserror --no-restore\n",
+                "      - name: Test\n        run: dotnet test --no-build\n",
+            ]);
+        Assert.Equal(1, Count(ci, Credential));
+        Assert.Equal(1, Count(ci, "GH_TOKEN"));
+        Assert.Equal(1, Count(ci, "secrets."));
+        Assert.Equal(1, Count(ci, "github.token"));
+        Assert.Equal(1, Count(ci, "dotnet restore"));
+        Assert.Equal(3, Count(ci, "run: dotnet "));
+    }
+
+    [Fact]
+    public void Workflows_GiveTheRegistryTokenOnlyToTheThreeRestoreSteps()
+    {
+        string all = RepoFiles.Read(".github/workflows/ci.yml") + RepoFiles.Read(".github/workflows/release.yml");
+
+        Assert.Equal(3, Count(all, Credential));
+        Assert.Equal(3, Count(all, "NuGetPackageSourceCredentials_github: "));
+        Assert.Equal(3, Count(all, "secrets."));
+        Assert.Equal(3, Count(all, "      - name: Restore\n        env:\n          " + Credential + "\n        run: dotnet restore"));
+        Assert.Equal(3, Count(all, "      packages: read\n"));
+        Assert.DoesNotContain("packages: write", all, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("CLAUDE.md")]
+    [InlineData("README.md")]
+    [InlineData("nuget.config")]
+    [InlineData(".github/workflows/ci.yml")]
+    [InlineData(".github/workflows/release.yml")]
+    public void Files_NameNeitherControlRoomsDocsNorItsRepo(string file)
+    {
+        string text = RepoFiles.Read(file);
+
+        Assert.DoesNotContain("ControlRoom/docs/roomkit.md", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("nothisisnotdaniel/controlroom", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(".github/workflows/ci.yml")]
+    [InlineData(".github/workflows/release.yml")]
+    public void Workflows_HaveNoFolderFeedOrReleaseDownload(string file)
+    {
+        string text = RepoFiles.Read(file);
+
+        Assert.DoesNotContain("gh release download", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("RoomKit/feed", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Fill the RoomKit feed", text, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("CLAUDE.md")]
+    [InlineData("README.md")]
+    public void Docs_ExplainTheGitHubPackagesSetup(string file)
+    {
+        string text = RepoFiles.Read(file);
+
+        Assert.Contains("https://github.com/nothisisnotdaniel/roomkit/blob/main/docs/roomkit.md", text, StringComparison.Ordinal);
+        Assert.Contains("https://nuget.pkg.github.com/nothisisnotdaniel/index.json", text, StringComparison.Ordinal);
+        Assert.Contains("`read:packages`", text, StringComparison.Ordinal);
+        Assert.Contains("classic", text, StringComparison.Ordinal);
+        Assert.Contains("NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>", text, StringComparison.Ordinal);
+        Assert.Contains("never committed", text, StringComparison.Ordinal);
+        Assert.Contains("`GITHUB_TOKEN`", text, StringComparison.Ordinal);
+        Assert.Contains("`Restore`", text, StringComparison.Ordinal);
+        Assert.Contains("`roomkit.sha256` in the same commit", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -157,21 +237,23 @@ public sealed class ProjectFilesTests
     }
 
     [Fact]
-    public void Ci_ChecksSumsPinAndAttestation_BeforeTheFeedAndTheBuild()
+    public void Ci_CheckStep_HashesTheRestoredFile_ComparesThePin_ThenVerifiesTheAttestation()
     {
         string ci = RepoFiles.Read(".github/workflows/ci.yml");
         string[] parts =
         [
-            "gh release download \"v$version\" --repo nothisisnotdaniel/controlroom",
-            "echo \"RoomKit.$version.nupkg does not match SHA256SUMS.\" >&2",
+            "echo \"No pinned RoomKit version in src/PRWatch/PRWatch.csproj.\" >&2",
+            "package=\"${NUGET_PACKAGES:-$HOME/.nuget/packages}/roomkit/$version/roomkit.$version.nupkg\"",
+            "actual=$(shasum -a 256 \"$package\" | awk '{ print $1 }')",
             "' roomkit.sha256)",
             "echo \"RoomKit.$version.nupkg does not match roomkit.sha256.\" >&2",
-            "gh attestation verify \"$download/RoomKit.$version.nupkg\" --repo nothisisnotdaniel/controlroom " +
-                "--signer-workflow nothisisnotdaniel/controlroom/.github/workflows/release.yml " +
-                "--source-ref refs/heads/main --deny-self-hosted-runners",
-            "echo \"RoomKit.$version.nupkg has no valid ControlRoom release attestation.\" >&2",
-            "cp \"$download/RoomKit.$version.nupkg\" \"$feed/\"",
-            "run: dotnet build -warnaserror",
+            "gh attestation verify \"$package\" --repo nothisisnotdaniel/roomkit " +
+                "--cert-identity https://github.com/nothisisnotdaniel/roomkit/.github/workflows/release.yml@refs/heads/main " +
+                "--cert-oidc-issuer https://token.actions.githubusercontent.com " +
+                "--source-ref refs/heads/main --deny-self-hosted-runners --format json --jq '",
+            "|| [ \"$verified\" != \"true\" ]; then",
+            "echo \"RoomKit.$version.nupkg has no valid roomkit release attestation.\" >&2",
+            "run: dotnet build -warnaserror --no-restore",
         ];
 
         int last = -1;
@@ -184,7 +266,33 @@ public sealed class ProjectFilesTests
         }
 
         Assert.Equal(1, Regex.Count(ci, @"gh attestation verify"));
-        Assert.Equal(1, Regex.Count(ci, @"\bcp "));
+        Assert.DoesNotContain("--signer-workflow", ci, StringComparison.Ordinal);
+    }
+
+    private const string Credential = "NuGetPackageSourceCredentials_github: Username=github;Password=${{ secrets.GITHUB_TOKEN }}";
+
+    private static int Count(string text, string part)
+    {
+        int count = 0;
+        int at = text.IndexOf(part, StringComparison.Ordinal);
+        while (at >= 0)
+        {
+            count++;
+            at = text.IndexOf(part, at + part.Length, StringComparison.Ordinal);
+        }
+
+        return count;
+    }
+
+    private static void AssertInOrder(string text, string[] parts)
+    {
+        int last = -1;
+        foreach (string part in parts)
+        {
+            int at = text.IndexOf(part, last + 1, StringComparison.Ordinal);
+            Assert.True(at > last, part);
+            last = at;
+        }
     }
 
     private static bool IsBuildOutput(string src, string file)

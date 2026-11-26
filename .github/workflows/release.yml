@@ -1,8 +1,8 @@
 # Builds PRWatch for macOS on Apple silicon from one release commit, in four jobs (a macOS-only, stable-only
 # subset of ControlRoom's release.yml):
 # - version checks the event and works out the release version and commit.
-# - macos-tests needs version: it fills the RoomKit feed, builds with -warnaserror and runs every test on the
-#   release commit (the normal build, version "dev").
+# - macos-tests needs version: it restores (RoomKit from GitHub Packages), checks the RoomKit package, builds with
+#   -warnaserror and runs every test on the release commit (the normal build, version "dev").
 # - macos needs version and macos-tests: it publishes the self-contained osx-arm64 build with the release
 #   version, smoke-checks its version, packs the tarball, reports its SHA-256 as the job output tarball_sha256
 #   and uploads only the tarball as an artifact.
@@ -18,6 +18,10 @@
 #   SHA256SUMS, plus a build-provenance attestation for the tarball (check it with:
 #   gh attestation verify <tarball> --repo nothisisnotdaniel/prwatch).
 # - The builds are only ad-hoc signed (no signing certificate yet).
+# macos-tests and macos have only contents: read and packages: read; the GITHUB_TOKEN reaches dotnet only on their
+# Restore steps (NuGetPackageSourceCredentials_github), and gh only on "Check the RoomKit package", which pins the
+# restored package's bytes (roomkit.sha256) and checks its attestation from roomkit's release.yml on main before
+# any build imports the package.
 # PR fields, job outputs and the token reach the shell only through env: blocks, never through ${{ }} inside a
 # run: script. Actions are pinned to full commit SHAs (the tag each one had is in the trailing comment), so a
 # moved tag cannot run new code with the contents: write token.
@@ -118,6 +122,7 @@ jobs:
     runs-on: macos-15
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Check out the release commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -130,7 +135,12 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Fill the RoomKit feed
+      - name: Restore
+        env:
+          NuGetPackageSourceCredentials_github: Username=github;Password=${{ secrets.GITHUB_TOKEN }}
+        run: dotnet restore
+
+      - name: Check the RoomKit package
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -140,17 +150,12 @@ jobs:
             echo "No pinned RoomKit version in src/PRWatch/PRWatch.csproj." >&2
             exit 1
           fi
-          feed="$HOME/Library/Application Support/RoomKit/feed"
-          download="$RUNNER_TEMP/roomkit"
-          mkdir -p "$feed" "$download"
-          gh release download "v$version" --repo nothisisnotdaniel/controlroom \
-            --pattern "RoomKit.$version.nupkg" --pattern SHA256SUMS --dir "$download"
-          expected=$(awk -v name="RoomKit.$version.nupkg" '$2 == name { print $1 }' "$download/SHA256SUMS")
-          actual=$(shasum -a 256 "$download/RoomKit.$version.nupkg" | awk '{ print $1 }')
-          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-            echo "RoomKit.$version.nupkg does not match SHA256SUMS." >&2
+          package="${NUGET_PACKAGES:-$HOME/.nuget/packages}/roomkit/$version/roomkit.$version.nupkg"
+          if [ ! -f "$package" ] || [ -L "$package" ]; then
+            echo "RoomKit.$version.nupkg is not in the restored packages." >&2
             exit 1
           fi
+          actual=$(shasum -a 256 "$package" | awk '{ print $1 }')
           pinned=""
           if [ -f roomkit.sha256 ]; then
             pinned=$(awk -v name="RoomKit.$version.nupkg" 'NR == 1 && NF == 2 && $2 == name { hash = $1 } END { if (NR == 1) print hash }' roomkit.sha256)
@@ -159,14 +164,15 @@ jobs:
             echo "RoomKit.$version.nupkg does not match roomkit.sha256." >&2
             exit 1
           fi
-          if ! gh attestation verify "$download/RoomKit.$version.nupkg" --repo nothisisnotdaniel/controlroom --signer-workflow nothisisnotdaniel/controlroom/.github/workflows/release.yml --source-ref refs/heads/main --deny-self-hosted-runners; then
-            echo "RoomKit.$version.nupkg has no valid ControlRoom release attestation." >&2
+          # Every attestation must come from roomkit's release.yml on main, run by a merged pull request on a
+          # GitHub-hosted runner; true only then.
+          if ! verified=$(gh attestation verify "$package" --repo nothisisnotdaniel/roomkit --cert-identity https://github.com/nothisisnotdaniel/roomkit/.github/workflows/release.yml@refs/heads/main --cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref refs/heads/main --deny-self-hosted-runners --format json --jq 'length > 0 and all(.[]; .verificationResult.signature.certificate | .githubWorkflowTrigger == "pull_request" and .sourceRepositoryRef == "refs/heads/main" and .runnerEnvironment == "github-hosted")') || [ "$verified" != "true" ]; then
+            echo "RoomKit.$version.nupkg has no valid roomkit release attestation." >&2
             exit 1
           fi
-          cp "$download/RoomKit.$version.nupkg" "$feed/"
 
       - name: Build
-        run: dotnet build -warnaserror
+        run: dotnet build -warnaserror --no-restore
 
       - name: Test
         run: dotnet test --no-build
@@ -176,6 +182,7 @@ jobs:
     runs-on: macos-15
     permissions:
       contents: read
+      packages: read
     outputs:
       tarball_sha256: ${{ steps.hash.outputs.tarball_sha256 }}
     env:
@@ -192,7 +199,12 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Fill the RoomKit feed
+      - name: Restore
+        env:
+          NuGetPackageSourceCredentials_github: Username=github;Password=${{ secrets.GITHUB_TOKEN }}
+        run: dotnet restore src/PRWatch -r osx-arm64
+
+      - name: Check the RoomKit package
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -202,17 +214,12 @@ jobs:
             echo "No pinned RoomKit version in src/PRWatch/PRWatch.csproj." >&2
             exit 1
           fi
-          feed="$HOME/Library/Application Support/RoomKit/feed"
-          download="$RUNNER_TEMP/roomkit"
-          mkdir -p "$feed" "$download"
-          gh release download "v$version" --repo nothisisnotdaniel/controlroom \
-            --pattern "RoomKit.$version.nupkg" --pattern SHA256SUMS --dir "$download"
-          expected=$(awk -v name="RoomKit.$version.nupkg" '$2 == name { print $1 }' "$download/SHA256SUMS")
-          actual=$(shasum -a 256 "$download/RoomKit.$version.nupkg" | awk '{ print $1 }')
-          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-            echo "RoomKit.$version.nupkg does not match SHA256SUMS." >&2
+          package="${NUGET_PACKAGES:-$HOME/.nuget/packages}/roomkit/$version/roomkit.$version.nupkg"
+          if [ ! -f "$package" ] || [ -L "$package" ]; then
+            echo "RoomKit.$version.nupkg is not in the restored packages." >&2
             exit 1
           fi
+          actual=$(shasum -a 256 "$package" | awk '{ print $1 }')
           pinned=""
           if [ -f roomkit.sha256 ]; then
             pinned=$(awk -v name="RoomKit.$version.nupkg" 'NR == 1 && NF == 2 && $2 == name { hash = $1 } END { if (NR == 1) print hash }' roomkit.sha256)
@@ -221,16 +228,17 @@ jobs:
             echo "RoomKit.$version.nupkg does not match roomkit.sha256." >&2
             exit 1
           fi
-          if ! gh attestation verify "$download/RoomKit.$version.nupkg" --repo nothisisnotdaniel/controlroom --signer-workflow nothisisnotdaniel/controlroom/.github/workflows/release.yml --source-ref refs/heads/main --deny-self-hosted-runners; then
-            echo "RoomKit.$version.nupkg has no valid ControlRoom release attestation." >&2
+          # Every attestation must come from roomkit's release.yml on main, run by a merged pull request on a
+          # GitHub-hosted runner; true only then.
+          if ! verified=$(gh attestation verify "$package" --repo nothisisnotdaniel/roomkit --cert-identity https://github.com/nothisisnotdaniel/roomkit/.github/workflows/release.yml@refs/heads/main --cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref refs/heads/main --deny-self-hosted-runners --format json --jq 'length > 0 and all(.[]; .verificationResult.signature.certificate | .githubWorkflowTrigger == "pull_request" and .sourceRepositoryRef == "refs/heads/main" and .runnerEnvironment == "github-hosted")') || [ "$verified" != "true" ]; then
+            echo "RoomKit.$version.nupkg has no valid roomkit release attestation." >&2
             exit 1
           fi
-          cp "$download/RoomKit.$version.nupkg" "$feed/"
 
       # MSBuild reads every environment variable as a property, ignoring case, so a name like VERSION would
       # become $(Version) here. That is why the names are RELEASE_VERSION and RELEASE_TARGET.
       - name: Publish
-        run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained -p:Version="$RELEASE_VERSION" -o "$RUNNER_TEMP/publish"
+        run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version="$RELEASE_VERSION" -o "$RUNNER_TEMP/publish"
 
       - name: Smoke check the published app
         run: |

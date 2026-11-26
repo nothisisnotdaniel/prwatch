@@ -2,6 +2,11 @@
 # Installs, removes and reports on the macOS LaunchAgent that starts the app's server at login.
 # Usage: scripts/launch-agent.sh install|uninstall|status
 #        scripts/launch-agent.sh install --tailnet-host <mac>.<tailnet>.ts.net  (adds --TailnetHost <name>)
+#        scripts/launch-agent.sh install --tailnet-host <name> --tailnet-port <port>  (also adds --TailnetPort <port>,
+#          for a tailscale serve --https=<port> other than 443)
+#        scripts/launch-agent.sh install --factory-root <path>  (the factory root; default: the folder above the app's)
+#        scripts/launch-agent.sh install --push-subject mailto:<address>|https://<host>  (adds --PushSubject <subject>,
+#          the Web Push VAPID subject; Apple refuses the default mailto:<app>@localhost)
 #        scripts/launch-agent.sh install --release [vX.Y.Z] [--tailnet-host <name>]
 #          (installs the ready-built release from GitHub instead of publishing: vX.Y.Z, or without a tag the
 #          latest one, or the newest develop build when settings.json picks the develop channel, plus the updater LaunchAgent UPDATER_LABEL that runs <support>/updater.sh about a minute
@@ -34,7 +39,7 @@ SOLUTION_FILE="PRWatch.slnx"
 UPDATER_INTERVAL=900
 UPDATER_START_DELAY=60
 UPDATE_RUNNING="An update is running. Try again in a few minutes."
-USAGE="usage: scripts/launch-agent.sh install [--release [vX.Y.Z]] [--tailnet-host <name>]|uninstall|status"
+USAGE="usage: scripts/launch-agent.sh install [--release [vX.Y.Z]] [--tailnet-host <name> [--tailnet-port <port>]] [--factory-root <path>] [--push-subject <subject>]|uninstall|status"
 # RELEASES (in the roomkit:app block) is the one repository releases come from (renaming it breaks --release).
 # The develop channel's one release list (newest first), the same as updater.sh.
 LIST_URL="https://api.github.com/repos/$REPO_SLUG/releases?per_page=100"
@@ -90,6 +95,48 @@ usage() {
 
 # True for a lower-case DNS name of 1-63-character labels (a-z, 0-9, -, no label starting or ending with -)
 # ending in .ts.net with at least two labels before it: the same rule as HostCheck.IsValidTailnetHost.
+# True for a port from 1 to 65535: ASCII digits, no sign, space or leading zero.
+valid_tailnet_port() {
+    case $1 in
+        '' | 0* | *[!0123456789]*) return 1 ;;
+    esac
+    if [ ${#1} -gt 5 ]; then
+        return 1
+    fi
+    [ "$1" -le 65535 ]
+}
+
+# True for mailto:<user>@<domain> (user of A-Z a-z 0-9 . _ % + -, a dotted domain of A-Z a-z 0-9 . - that is not
+# localhost) or https://<host>[/path] (A-Z a-z 0-9 . _ ~ / -), at most 200 characters: the VAPID subject push services
+# accept. No space, quote or control character can pass, so the value is safe in the plist.
+valid_push_subject() {
+    [ ${#1} -le 200 ] || return 1
+    case $1 in
+        mailto:*)
+            ps_rest=${1#mailto:}
+            ps_user=${ps_rest%%@*}
+            ps_domain=${ps_rest#*@}
+            [ "$ps_user" != "$ps_rest" ] || return 1
+            case $ps_user in
+                '' | *[!A-Za-z0-9._%+-]*) return 1 ;;
+            esac
+            case $ps_domain in
+                '' | *[!A-Za-z0-9.-]* | .* | *. | *..*) return 1 ;;
+                localhost | *.localhost) return 1 ;;
+                *.*) ;;
+                *) return 1 ;;
+            esac
+            ;;
+        https://*)
+            ps_rest=${1#https://}
+            case $ps_rest in
+                '' | /* | *[!A-Za-z0-9._~/-]*) return 1 ;;
+            esac
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 valid_tailnet_host() {
     case $1 in
         *.ts.net) ;;
@@ -139,10 +186,17 @@ COMMAND=$1
 shift
 TAILNET_HOST=""
 HAS_TAILNET=no
+TAILNET_PORT=""
+HAS_PORT=no
+FACTORY_ROOT=""
+HAS_ROOT=no
+PUSH_SUBJECT=""
+HAS_SUBJECT=no
 RELEASE=no
 TAG=""
 if [ "$COMMAND" = install ]; then
-    # install [--release [vX.Y.Z]] [--tailnet-host <name>]: in either order, each at most once.
+    # install [--release [vX.Y.Z]] [--tailnet-host <name> [--tailnet-port <port>]] [--factory-root <path>]
+    # [--push-subject <subject>]: in any order, each at most once; --tailnet-port only with --tailnet-host.
     while [ $# -gt 0 ]; do
         case $1 in
             --tailnet-host)
@@ -156,21 +210,66 @@ if [ "$COMMAND" = install ]; then
                 TAILNET_HOST=$2
                 shift 2
                 ;;
+            --tailnet-port)
+                if [ "$HAS_PORT" = yes ] || [ $# -lt 2 ]; then
+                    usage
+                fi
+                if ! valid_tailnet_port "$2"; then
+                    fail "--tailnet-port must be a port from 1 to 65535. Nothing was changed."
+                fi
+                HAS_PORT=yes
+                TAILNET_PORT=$2
+                shift 2
+                ;;
+            --factory-root)
+                if [ "$HAS_ROOT" = yes ] || [ $# -lt 2 ]; then
+                    usage
+                fi
+                case $2 in
+                    /*) ;;
+                    *) fail "--factory-root must be an absolute path to a folder. Nothing was changed." ;;
+                esac
+                if [ ! -d "$2" ]; then
+                    fail "--factory-root must be an absolute path to a folder. Nothing was changed."
+                fi
+                HAS_ROOT=yes
+                FACTORY_ROOT=$2
+                shift 2
+                ;;
+            --push-subject)
+                if [ "$HAS_SUBJECT" = yes ] || [ $# -lt 2 ]; then
+                    usage
+                fi
+                if ! valid_push_subject "$2"; then
+                    fail "--push-subject must be mailto:<address> or https://<host>. Nothing was changed."
+                fi
+                HAS_SUBJECT=yes
+                PUSH_SUBJECT=$2
+                shift 2
+                ;;
             --release)
                 if [ "$RELEASE" = yes ]; then
                     usage
                 fi
                 RELEASE=yes
                 shift
-                if [ $# -gt 0 ] && [ "$1" != --tailnet-host ]; then
-                    valid_tag "$1" || usage
-                    TAG=$1
-                    shift
+                if [ $# -gt 0 ]; then
+                    case $1 in
+                        --tailnet-host | --tailnet-port | --factory-root | --push-subject) ;;
+                        *)
+                            valid_tag "$1" || usage
+                            TAG=$1
+                            shift
+                            ;;
+                    esac
                 fi
                 ;;
             *) usage ;;
         esac
     done
+    if [ "$HAS_PORT" = yes ] && [ "$HAS_TAILNET" = no ]; then
+        usage
+    fi
 elif [ $# -ne 0 ]; then
     usage
 fi
@@ -696,7 +795,12 @@ do_install() {
     SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd) || fail "Can't find the script folder."
     REPO=$(cd "$SCRIPT_DIR/.." && pwd) || fail "Can't find the $APP_NAME folder."
     [ -f "$REPO/$SOLUTION_FILE" ] || fail "Can't find $SOLUTION_FILE next to the scripts folder."
-    ROOT=$(cd "$REPO/.." && pwd) || fail "Can't find the factory root."
+    if [ "$HAS_ROOT" = yes ]; then
+        check_text "$FACTORY_ROOT" "The factory root path contains a control character."
+        ROOT=$(cd "$FACTORY_ROOT" && pwd) || fail "Can't find the factory root."
+    else
+        ROOT=$(cd "$REPO/.." && pwd) || fail "Can't find the factory root."
+    fi
     check_text "$ROOT" "The factory root path contains a control character."
 
     if [ "$RELEASE" = yes ]; then
@@ -784,6 +888,14 @@ do_install() {
         if [ -n "$TAILNET_HOST" ]; then
             printf '        <string>--TailnetHost</string>\n'
             printf '        <string>%s</string>\n' "$(xml_escape "$TAILNET_HOST")"
+        fi
+        if [ -n "$TAILNET_PORT" ]; then
+            printf '        <string>--TailnetPort</string>\n'
+            printf '        <string>%s</string>\n' "$TAILNET_PORT"
+        fi
+        if [ -n "$PUSH_SUBJECT" ]; then
+            printf '        <string>--PushSubject</string>\n'
+            printf '        <string>%s</string>\n' "$(xml_escape "$PUSH_SUBJECT")"
         fi
         printf '    </array>\n'
         printf '    <key>WorkingDirectory</key>\n'

@@ -36,13 +36,13 @@ public sealed class ReleaseWorkflowTests : IDisposable
     }
 
     [Fact]
-    public void Permissions_OnlyReleaseCanWrite()
+    public void Permissions_OnlyReleaseCanWrite_AndOnlyTheBuildJobsReadPackages()
     {
         string workflow = Workflow();
 
         Assert.Equal(["contents: read"], Permissions(Job(workflow, "version")));
-        Assert.Equal(["contents: read"], Permissions(Job(workflow, "macos-tests")));
-        Assert.Equal(["contents: read"], Permissions(Job(workflow, "macos")));
+        Assert.Equal(["contents: read", "packages: read"], Permissions(Job(workflow, "macos-tests")));
+        Assert.Equal(["contents: read", "packages: read"], Permissions(Job(workflow, "macos")));
         Assert.Equal(
             ["contents: write", "id-token: write", "attestations: write"], Permissions(Job(workflow, "release")));
         int permissionLines = workflow.Split('\n').Count(line => line.TrimStart().StartsWith("permissions:", StringComparison.Ordinal));
@@ -51,6 +51,9 @@ public sealed class ReleaseWorkflowTests : IDisposable
         {
             Assert.DoesNotContain("write", string.Join('\n', Permissions(Job(workflow, job))), StringComparison.Ordinal);
         }
+
+        Assert.Equal(2, Count(workflow, "      packages: "));
+        Assert.DoesNotContain("packages: write", workflow, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -159,25 +162,56 @@ public sealed class ReleaseWorkflowTests : IDisposable
     }
 
     [Fact]
-    public void BuildJobs_FillTheFeedLikeCi_BeforeAnyDotnet()
+    public void BuildJobs_RestoreThenCheckRoomKitLikeCi_BeforeAnyOtherDotnet()
     {
         string workflow = Workflow();
-        string feed = Step(RepoFiles.Read(".github/workflows/ci.yml"), "Fill the RoomKit feed");
+        string check = Step(RepoFiles.Read(".github/workflows/ci.yml"), "Check the RoomKit package");
 
-        Assert.Contains("gh release download \"v$version\" --repo nothisisnotdaniel/controlroom", feed, StringComparison.Ordinal);
-        Assert.Equal(2, Count(workflow, feed));
-        foreach (string name in new[] { "macos-tests", "macos" })
+        Assert.Contains("gh attestation verify \"$package\" --repo nothisisnotdaniel/roomkit", check, StringComparison.Ordinal);
+        Assert.Equal(2, Count(workflow, check));
+        foreach ((string name, string restoreRun) in new[]
+        {
+            ("macos-tests", "run: dotnet restore\n"),
+            ("macos", "run: dotnet restore src/PRWatch -r osx-arm64\n"),
+        })
         {
             string job = Job(workflow, name);
-            Assert.Equal(feed, Step(job, "Fill the RoomKit feed"));
-            int feedAt = job.IndexOf(feed, StringComparison.Ordinal);
-            int dotnetAt = job.IndexOf("run: dotnet ", StringComparison.Ordinal);
-            Assert.True(feedAt > 0 && dotnetAt > feedAt, name);
+            List<string> steps = StepNames(job);
+            Assert.Equal(steps.IndexOf("Restore") + 1, steps.IndexOf("Check the RoomKit package"));
+            Assert.Equal(
+                "      - name: Restore\n        env:\n          " +
+                    "NuGetPackageSourceCredentials_github: Username=github;Password=${{ secrets.GITHUB_TOKEN }}\n        " +
+                    restoreRun,
+                Step(job, "Restore"));
+            Assert.Equal(check, Step(job, "Check the RoomKit package"));
+            int restoreAt = job.IndexOf("      - name: Restore\n", StringComparison.Ordinal);
+            int checkAt = job.IndexOf(check, StringComparison.Ordinal);
+            List<string> dotnets = [.. RunBlocks(job).Where(run => run.StartsWith("run: dotnet ", StringComparison.Ordinal))];
+            Assert.Equal(restoreRun.TrimEnd('\n'), dotnets[0]);
+            int firstOther = job.IndexOf(dotnets[1], StringComparison.Ordinal);
+            Assert.True(restoreAt > 0 && checkAt > restoreAt && firstOther > checkAt, name);
+            foreach (string run in dotnets.Skip(1))
+            {
+                Assert.True(run.Contains(" --no-restore", StringComparison.Ordinal) || run.Contains(" --no-build", StringComparison.Ordinal), run);
+            }
+
+            Assert.Equal(1, Count(job, "NuGetPackageSourceCredentials_github: "));
+            Assert.Equal(1, Count(job, "GH_TOKEN"));
             Assert.Contains("    runs-on: macos-15\n", job, StringComparison.Ordinal);
             string checkout = Step(job, StepNames(job)[0]);
             Assert.Contains("ref: ${{ needs.version.outputs.release_target }}", checkout, StringComparison.Ordinal);
             Assert.Contains("persist-credentials: false", checkout, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void Workflow_HasNoFolderFeedOrControlRoomRelease()
+    {
+        string workflow = Workflow();
+
+        Assert.DoesNotContain("gh release download", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothisisnotdaniel/controlroom", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("RoomKit/feed", workflow, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -189,9 +223,9 @@ public sealed class ReleaseWorkflowTests : IDisposable
         Assert.Contains("    needs: version\n", tests, StringComparison.Ordinal);
         Assert.Contains("    needs: [version, macos-tests]\n", Job(workflow, "macos"), StringComparison.Ordinal);
         Assert.Contains("    needs: [version, macos]\n", Job(workflow, "release"), StringComparison.Ordinal);
-        Assert.Equal(["run: dotnet build -warnaserror", "run: dotnet test --no-build"], RunBlocks(tests).Where(run => run.StartsWith("run: dotnet", StringComparison.Ordinal)));
+        Assert.Equal(["run: dotnet restore", "run: dotnet build -warnaserror --no-restore", "run: dotnet test --no-build"], RunBlocks(tests).Where(run => run.StartsWith("run: dotnet", StringComparison.Ordinal)));
         Assert.True(
-            tests.IndexOf("run: dotnet build -warnaserror", StringComparison.Ordinal) <
+            tests.IndexOf("run: dotnet build -warnaserror --no-restore", StringComparison.Ordinal) <
             tests.IndexOf("run: dotnet test --no-build", StringComparison.Ordinal));
     }
 
@@ -202,7 +236,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
         Assert.Contains("      RELEASE_VERSION: ${{ needs.version.outputs.release_version }}\n", macos, StringComparison.Ordinal);
         Assert.Contains(
-            "run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained -p:Version=\"$RELEASE_VERSION\" -o \"$RUNNER_TEMP/publish\"\n",
+            "run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version=\"$RELEASE_VERSION\" -o \"$RUNNER_TEMP/publish\"\n",
             Step(macos, "Publish"),
             StringComparison.Ordinal);
 
@@ -444,7 +478,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
         string workflow = Workflow();
 
         List<string> runs = RunBlocks(workflow);
-        Assert.Equal(13, runs.Count);
+        Assert.Equal(15, runs.Count);
         foreach (string run in runs)
         {
             Assert.DoesNotContain("${{", run, StringComparison.Ordinal);
@@ -471,7 +505,9 @@ public sealed class ReleaseWorkflowTests : IDisposable
             Assert.Contains(uses, line => line.EndsWith(pin, StringComparison.Ordinal));
         }
 
-        Assert.DoesNotContain("secrets.", workflow, StringComparison.Ordinal);
+        // The only secret is the job token, on the two Restore steps.
+        Assert.Equal(2, Count(workflow, "secrets."));
+        Assert.Equal(2, Count(workflow, "Password=${{ secrets.GITHUB_TOKEN }}\n"));
         Assert.DoesNotContain("pull_request_target", workflow, StringComparison.Ordinal);
         int checkouts = Count(workflow, "uses: actions/checkout@");
         Assert.Equal(4, checkouts);
