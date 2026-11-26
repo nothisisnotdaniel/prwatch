@@ -1,4 +1,6 @@
+using System.Collections.Immutable;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace PRWatch;
 
@@ -70,6 +72,10 @@ internal sealed class StatusStore
         return Update(status => status with { LastError = new StatusError(code, time.GetUtcNow()) });
     }
 
+    /// <summary>The status in the file, or <see cref="Status.Initial"/> when it is missing or invalid. Invalid
+    /// <c>prs</c>, <c>skipped</c> or <c>pick</c> content loads as the empty value and the rest still loads;
+    /// a <c>runs</c> key that is not <c>&lt;repo&gt;-&lt;n&gt;</c> (<see cref="PrRules.IsRunKey"/>) is
+    /// dropped.</summary>
     private static Status Load(string path)
     {
         byte[]? bytes = SafeFileReader.ReadBytes(path, MaxFileBytes);
@@ -80,14 +86,71 @@ internal sealed class StatusStore
 
         try
         {
-            Status? loaded = JsonSerializer.Deserialize<Status>(bytes, PrWatchJson.FileOptions);
-            return loaded is not null && IsValid(loaded)
-                ? loaded with { Runs = loaded.Runs.WithComparers(StringComparer.Ordinal) }
-                : Status.Initial;
+            if (JsonNode.Parse(bytes) is not JsonObject top)
+            {
+                return Status.Initial;
+            }
+
+            JsonNode? prs = Detach(top, "prs");
+            JsonNode? skipped = Detach(top, "skipped");
+            JsonNode? pick = Detach(top, "pick");
+            Status? loaded = top.Deserialize<Status>(PrWatchJson.FileOptions);
+            if (loaded is null || !IsValid(loaded))
+            {
+                return Status.Initial;
+            }
+
+            ImmutableSortedDictionary<string, RunStatus> runs = loaded.Runs
+                .Where(run => PrRules.IsRunKey(run.Key))
+                .ToImmutableSortedDictionary(run => run.Key, run => run.Value, StringComparer.Ordinal);
+            return loaded with
+            {
+                Runs = runs,
+                Prs = LoadPart<List<PrStatus>>(prs, list => list.Count <= PrRules.MaxPrs
+                    && list.All(pr => pr is not null && PrRules.IsValid(pr))) ?? [],
+                Skipped = LoadPart<List<SkipStatus>>(skipped, list => list.All(skip => skip is not null
+                    && PrRules.IsProjectName(skip.Project)
+                    && SkipStatus.Reasons.Contains(skip.Reason, StringComparer.Ordinal))) ?? [],
+                Pick = LoadPart<PickStatus>(pick, found => PrRules.IsProjectName(found.Project)
+                    && PrRules.IsNumber(found.Number)
+                    && PrRules.IsSha(found.HeadSha)),
+            };
         }
         catch (JsonException)
         {
             return Status.Initial;
+        }
+    }
+
+    private static JsonNode? Detach(JsonObject top, string name)
+    {
+        if (!top.TryGetPropertyValue(name, out JsonNode? node))
+        {
+            return null;
+        }
+
+        top.Remove(name);
+        return node;
+    }
+
+    /// <summary>The part read from <paramref name="node"/> when it parses and <paramref name="valid"/> accepts
+    /// it, else <c>null</c>.</summary>
+    private static T? LoadPart<T>(JsonNode? node, Func<T, bool> valid)
+        where T : class
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            T? part = node.Deserialize<T>(PrWatchJson.FileOptions);
+            return part is not null && valid(part) ? part : null;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            return null;
         }
     }
 

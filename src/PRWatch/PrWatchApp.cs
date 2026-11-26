@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace PRWatch;
 
@@ -47,8 +48,10 @@ internal static class PrWatchApp
         return Path.Combine(data, Options.DataFolderName);
     }
 
-    /// <summary>Registers the status and settings stores (both in the data folder, clock from the container) and
-    /// loads the settings at start, so an unreadable file shows in the status at once.</summary>
+    /// <summary>Registers the status and settings stores (both in the data folder, clock from the container),
+    /// loads the settings at start, so an unreadable file shows in the status at once, and adds the watcher with
+    /// its poll runner and the review runner (<see cref="NullReviewRunner"/> unless one is already
+    /// registered).</summary>
     public static void AddServices(RoomServices services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -58,6 +61,10 @@ internal static class PrWatchApp
         services.Services.AddSingleton(provider => new SettingsStore(
             folder, factoryRoot, provider.GetRequiredService<StatusStore>()));
         services.Services.AddHostedService<SettingsLoader>();
+        services.Services.AddSingleton(_ => PollRunner.FromConfiguration(services.Configuration));
+        services.Services.TryAddSingleton<IReviewRunner, NullReviewRunner>();
+        services.Services.AddSingleton<Watcher>();
+        services.Services.AddHostedService(provider => provider.GetRequiredService<Watcher>());
     }
 
     /// <summary>Maps <c>GET</c>/<c>POST /api/settings</c> and <c>GET /api/status</c>.</summary>

@@ -49,6 +49,12 @@ internal sealed class PrWatchFactory : WebApplicationFactory<Program>
     /// <c>null</c>.</summary>
     public string? FactoryRoot { get; set; }
 
+    /// <summary>Extra test services, added after the app's own (so they win), set before the host starts.</summary>
+    public Action<IServiceCollection>? TestServices { get; set; }
+
+    /// <summary>Extra host settings (for example <c>PollTimeoutSeconds</c>), set before the host starts.</summary>
+    public Dictionary<string, string> Settings { get; } = new(StringComparer.Ordinal);
+
     /// <summary>The app's clock.</summary>
     public FakeClock Clock { get; } = new(FakeClock.DefaultNow);
 
@@ -91,8 +97,17 @@ internal sealed class PrWatchFactory : WebApplicationFactory<Program>
             builder.UseSetting("FactoryRoot", FactoryRoot);
         }
 
+        foreach (KeyValuePair<string, string> setting in Settings)
+        {
+            builder.UseSetting(setting.Key, setting.Value);
+        }
+
         builder.UseEnvironment(Environment);
-        builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(Clock));
+        builder.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<TimeProvider>(Clock);
+            TestServices?.Invoke(services);
+        });
     }
 
     protected override void Dispose(bool disposing)

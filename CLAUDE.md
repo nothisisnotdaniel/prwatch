@@ -77,6 +77,10 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   - `src/PRWatch/`: `Program.cs`, `PrWatchApp` (options and routes), the watcher, the `claude` runner, the brake,
     the request writer, settings and status; `wwwroot/` (`index.html`, `room.js`, `app.js`, icons, manifest).
   - `tests/PRWatch.Tests/`: xUnit tests with a temporary factory root and fake `job.py` / `claude` scripts.
+    `FakeJobPy` writes a `job.py` that prints `poll-output.json` (exit `poll-exit`, pause `poll-sleep`) and logs its
+    argv, cwd and environment to a calls file outside the root; `WatcherRig` builds a watcher on its stores without
+    a host; `FakeClock` timers fire on `Advance`; `FakeReviewRunner` stands in for the runner
+    (`PrWatchFactory.TestServices`). The poll timeout is the config value `PollTimeoutSeconds` (default 120).
   - `scripts/launch-agent.sh`, `scripts/updater.sh`: RoomKit's copies; change only the block between
     `# roomkit:app-begin` and `# roomkit:app-end`.
   - `.github/workflows/`: CI on every push and PR, release on a merged `release vX.Y.Z` PR into `main`.

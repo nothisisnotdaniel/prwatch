@@ -7,6 +7,20 @@ namespace PRWatch;
 /// failed save.</summary>
 internal sealed record SettingsChange(Settings? Saved, IReadOnlyList<string> Fields, bool SaveFailed);
 
+/// <summary>The settings before and after a saved <see cref="SettingsStore.Change"/>.</summary>
+internal sealed class SettingsChangedEventArgs : EventArgs
+{
+    public SettingsChangedEventArgs(Settings previous, Settings current)
+    {
+        Previous = previous;
+        Current = current;
+    }
+
+    public Settings Previous { get; }
+
+    public Settings Current { get; }
+}
+
 /// <summary>Loads and saves <c>prwatch-settings.json</c> in the data folder (never RoomKit's
 /// <c>settings.json</c>). A missing file gives the defaults. A file that can't be read or breaks a rule is never
 /// overwritten on load: the settings are the defaults (so <c>enabled</c> is off) and the status gets
@@ -37,6 +51,9 @@ internal sealed class SettingsStore
         }
     }
 
+    /// <summary>Raised after <see cref="Change"/> has saved new settings (outside the store's lock).</summary>
+    public event EventHandler<SettingsChangedEventArgs>? Changed;
+
     /// <summary>The full path of <c>prwatch-settings.json</c>.</summary>
     public string Path { get; }
 
@@ -56,9 +73,11 @@ internal sealed class SettingsStore
     /// written when a field is invalid or the save fails.</summary>
     public SettingsChange Change(JsonElement body)
     {
+        Settings previous;
+        Settings? merged;
         lock (gate)
         {
-            Settings? merged = SettingsRules.Merge(current, body, out IReadOnlyList<string> fields);
+            merged = SettingsRules.Merge(current, body, out IReadOnlyList<string> fields);
             if (merged is null)
             {
                 return new SettingsChange(null, fields, SaveFailed: false);
@@ -73,9 +92,12 @@ internal sealed class SettingsStore
                 return new SettingsChange(null, [], SaveFailed: true);
             }
 
+            previous = current;
             current = merged;
-            return new SettingsChange(merged, [], SaveFailed: false);
         }
+
+        Changed?.Invoke(this, new SettingsChangedEventArgs(previous, merged));
+        return new SettingsChange(merged, [], SaveFailed: false);
     }
 
     /// <summary>The settings as the API returns them: every field plus the read-only <c>effectiveMode</c>,
