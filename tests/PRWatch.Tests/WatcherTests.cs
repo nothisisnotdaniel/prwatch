@@ -191,7 +191,7 @@ public sealed class WatcherTests
     public async Task Poll_KeepsOnlyValidPrs_SortedAndCapped_WithCleanedText()
     {
         using WatcherRig rig = new();
-        rig.Change("{\"projects\":[\"Alpha\"]}");
+        rig.Change("{\"projects\":[\"Alpha\",\"factory\"]}");
         JsonObject longText = WatcherRig.Pr("Alpha", 10);
         longText["title"] = new string('t', 250);
         longText["author"] = new string('a', 150);
@@ -745,6 +745,99 @@ public sealed class WatcherTests
         {
             Directory.Delete(folder, recursive: true);
         }
+    }
+
+    // --- Job 433: the projects setting filters the factory's own PRs -----------------------------
+
+    [Fact]
+    public async Task ProjectsUnset_KeepsEveryProject_FactoryIncluded_AndPicksTheFirst()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("factory", 2), WatcherRig.Pr("Alpha", 1)]);
+
+        await rig.Poll();
+
+        Status status = rig.Status.Current;
+        Assert.Null(rig.Settings.Current.Projects);
+        Assert.Equal(["Alpha-1", "factory-2"], status.Prs.Select(pr => PrRules.RunKey(pr.Project, pr.Number)));
+        ReviewPick pick = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(("Alpha", 1), (pick.Project, pick.Number));
+    }
+
+    [Fact]
+    public async Task ProjectsUnset_PicksAFactoryPr_AndHandsItToTheRunner()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("factory", 2)]);
+
+        await rig.Poll();
+
+        ReviewPick pick = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(("factory", 2, Sha), (pick.Project, pick.Number, pick.HeadSha));
+        Assert.Equal("factory", rig.Status.Current.Pick?.Project);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("review")]
+    [InlineData("merge")]
+    [InlineData("cancel")]
+    public async Task ProjectsWithoutFactory_StoresNoFactoryPr_PicksNone_AndSkipsNoFactoryEntry(string? request)
+    {
+        using WatcherRig rig = new();
+        rig.Change("{\"projects\":[\"Alpha\"]}");
+        rig.Output([WatcherRig.Pr("factory", 1, trusted: false, request: request)],
+            [Skip("factory", "gh is not installed"), Skip("Alpha", "no origin remote")]);
+        rig.Job("1-f", "{\"project\":\"factory\",\"stage\":\"build\"}");
+
+        await rig.Poll();
+
+        Status status = rig.Status.Current;
+        Assert.Empty(status.Prs);
+        Assert.Null(status.Pick);
+        Assert.Empty(rig.Runner.Calls);
+        Assert.Equal([("Alpha", "no_remote")], status.Skipped.Select(skip => (skip.Project, skip.Reason)));
+    }
+
+    [Theory]
+    [InlineData("[\"factory\"]")]
+    [InlineData("[\"Alpha\",\"factory\"]")]
+    public async Task ProjectsWithFactory_KeepsAndPicksFactoryPrs_AndLeavesOutOthers(string projects)
+    {
+        using WatcherRig rig = new();
+        rig.Change("{\"projects\":" + projects + "}");
+        rig.Output([WatcherRig.Pr("Beta", 1), WatcherRig.Pr("factory", 3)]);
+
+        await rig.Poll();
+
+        Status status = rig.Status.Current;
+        Assert.Equal(["factory-3"], status.Prs.Select(pr => PrRules.RunKey(pr.Project, pr.Number)));
+        ReviewPick pick = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(("factory", 3), (pick.Project, pick.Number));
+    }
+
+    [Fact]
+    public async Task ProjectsWithoutFactory_KeepsItsStoredRuns()
+    {
+        using WatcherRig rig = new();
+        SetRun(rig, "factory-1", Sha);
+        SetRun(rig, "Alpha-1", Sha);
+        rig.Change("{\"projects\":[\"Alpha\"]}");
+        rig.Output([]);
+
+        await rig.Poll();
+
+        Assert.Equal(["Alpha-1", "factory-1"], rig.Status.Current.Runs.Keys.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AllowedProjects_HasNoFactorySpecialCase()
+    {
+        string[] discovered = ["Alpha", "Beta", "factory"];
+
+        Assert.Equal(discovered, Watcher.AllowedProjects(discovered, null).Order(StringComparer.Ordinal));
+        Assert.Equal(["Alpha"], Watcher.AllowedProjects(discovered, ["Alpha", "Gamma"]));
+        Assert.Equal(["factory"], Watcher.AllowedProjects(discovered, ["factory"]));
     }
 
     // --- AC-9: loading status.json ---------------------------------------------------------------

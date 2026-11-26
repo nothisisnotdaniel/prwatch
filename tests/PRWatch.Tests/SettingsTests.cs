@@ -106,6 +106,22 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public async Task Post_FactoryAlone_IsSaved_AndFactoryStaysAKnownProject()
+    {
+        using PrWatchFactory factory = NewHost(out _, out _);
+        using HttpClient client = await Start(factory);
+
+        using HttpResponseMessage response = await Post(client, "{\"projects\":[\"factory\"]}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using JsonDocument saved = JsonDocument.Parse(await client.GetStringAsync(Route));
+        Assert.Equal(["factory"],
+            saved.RootElement.GetProperty("projects").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("factory",
+            saved.RootElement.GetProperty("knownProjects").EnumerateArray().Select(item => item.GetString()));
+    }
+
+    [Fact]
     public async Task Post_NullsResetToAllProjectsAndTheDefaultMode()
     {
         using PrWatchFactory factory = NewHost(out string root, out _);

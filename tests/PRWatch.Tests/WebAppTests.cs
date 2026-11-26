@@ -57,6 +57,22 @@ public sealed partial class WebAppTests
         Assert.DoesNotContain("https://", html, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Index_ProjectsHelp_NamesFactoryAsAChoice_AndNoSelectionAsEveryProject()
+    {
+        using PrWatchFactory factory = new();
+        using HttpClient client = factory.CreateClient();
+
+        string html = await client.GetStringAsync("/index.html");
+
+        Match help = ProjectsHelp().Match(html);
+        Assert.True(help.Success);
+        string text = help.Groups["text"].Value;
+        Assert.Contains("None selected: every project", text, StringComparison.Ordinal);
+        Assert.Contains("factory", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("<", text, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("/app.css")]
     [InlineData("/token.js")]
@@ -426,4 +442,7 @@ public sealed partial class WebAppTests
 
     [GeneratedRegex(@"""(?<value>[^""]*)""")]
     private static partial Regex QuotedString();
+
+    [GeneratedRegex(@"<select id=""field-projects""[^>]*></select>\s*<p class=""field-help"">(?<text>[^<]*)</p>")]
+    private static partial Regex ProjectsHelp();
 }
