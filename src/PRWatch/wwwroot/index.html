@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="PRWatch">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+  <title>PRWatch</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/room.js" defer></script>
+  <script src="/token.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top" id="top">
+    <h1 id="top-title">PRWatch</h1>
+  </header>
+  <nav class="nav tab-bar" aria-label="Sections" hidden></nav>
+  <main id="home">
+    <p class="status" id="home-status" role="status">Loading…</p>
+  </main>
+  <main id="token" hidden>
+    <form class="token-form" id="token-form" novalidate>
+      <h1 class="token-title">PRWatch</h1>
+      <p class="token-help">Enter the access token once on this device. Show it on the Mac with: <code>dotnet run --project src/PRWatch -- token</code></p>
+      <p class="error" id="token-refused" role="alert" hidden></p>
+      <label class="token-label" for="token-input">Access token</label>
+      <input class="token-input" id="token-input" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="token-save" type="submit">Save</button>
+    </form>
+  </main>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>PRWatch</RootNamespace>
+    <!-- The version is only the passed -p:Version, never with a +sha suffix. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <!-- A build without -p:Version reports "dev" (RoomKit's version reads the informational version). -->
+  <PropertyGroup Condition="'$(Version)' == ''">
+    <InformationalVersion>dev</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PRWatch.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Exactly this version, from the RoomKit folder feed only (nuget.config). CI reads it from this line. -->
+    <PackageReference Include="RoomKit" Version="[0.3.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="RoomKit" />
+  </ItemGroup>
+
+</Project>

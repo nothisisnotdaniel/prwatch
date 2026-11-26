@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Fill the RoomKit feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(sed -n 's/.*<PackageReference Include="RoomKit" Version="\[\([0-9][0-9.]*\)\]".*/\1/p' src/PRWatch/PRWatch.csproj)
+          if [ -z "$version" ]; then
+            echo "No pinned RoomKit version in src/PRWatch/PRWatch.csproj." >&2
+            exit 1
+          fi
+          feed="$HOME/Library/Application Support/RoomKit/feed"
+          download="$RUNNER_TEMP/roomkit"
+          mkdir -p "$feed" "$download"
+          gh release download "v$version" --repo nothisisnotdaniel/controlroom \
+            --pattern "RoomKit.$version.nupkg" --pattern SHA256SUMS --dir "$download"
+          expected=$(awk -v name="RoomKit.$version.nupkg" '$2 == name { print $1 }' "$download/SHA256SUMS")
+          actual=$(shasum -a 256 "$download/RoomKit.$version.nupkg" | awk '{ print $1 }')
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "RoomKit.$version.nupkg does not match SHA256SUMS." >&2
+            exit 1
+          fi
+          cp "$download/RoomKit.$version.nupkg" "$feed/"
+
+      - name: Build
+        run: dotnet build -warnaserror
+
+      - name: Test
+        run: dotnet test --no-build

@@ -21,7 +21,11 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
 - **Test command:** `dotnet test` (from `PRWatch/`; `dotnet build` must stay at 0 warnings). Tests never read the
   real factory root, never start a real `claude`, `gh` or `git` against the network and never open a real port:
   they build a temporary factory root with a fake `factory/tools/job.py` and a fake `claude` script on a test
-  `PATH`, and host the app in memory.
+  `PATH`, and host the app in memory. The in-memory harness is `tests/PRWatch.Tests/PrWatchFactory.cs` (own temp
+  folder, `--TokenFile=<temp>/PRWatch/access-token`, `--environment=Production`, `Host: 127.0.0.1:8101`).
+  Before the first build on a Mac, fill the feed once with the `gh release download` command from
+  `ControlRoom/docs/roomkit.md` for the version pinned in `src/PRWatch/PRWatch.csproj` (`Version="[x.y.z]"`; CI
+  reads it there and checks the package against the release's `SHA256SUMS`).
 - **Access:** as RoomKit gives it: loopback only (`127.0.0.1:8101`), `HostCheck`, the bearer token on every
   `/api/` path (token in `~/Library/Application Support/PRWatch/access-token`), reached from the iPhone through
   `tailscale serve` (`--TailnetHost`). Never listen on `0.0.0.0` or a LAN address.
