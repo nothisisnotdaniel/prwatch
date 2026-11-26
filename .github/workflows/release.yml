@@ -1,16 +1,27 @@
-# Builds PRWatch for macOS on Apple silicon from one release commit, in four jobs (a macOS-only, stable-only
+# Builds PRWatch for macOS on Apple silicon from one release commit, in five jobs (a macOS-only, stable-only
 # subset of ControlRoom's release.yml):
 # - version checks the event and works out the release version and commit.
 # - macos-tests needs version: it restores (RoomKit from GitHub Packages), checks the RoomKit package, builds with
 #   -warnaserror and runs every test on the release commit (the normal build, version "dev").
 # - macos needs version and macos-tests: it publishes the self-contained osx-arm64 build with the release
-#   version, smoke-checks its version, packs the tarball, reports its SHA-256 as the job output tarball_sha256
-#   and uploads only the tarball as an artifact.
-# - release needs version and macos. It downloads the artifact, checks that dist/ holds exactly the tarball and
-#   that its hash is the one macos reported, then sums, attests and publishes it. Only this job has write
-#   permissions; it builds nothing itself and has no checkout (gh names the repository through GH_REPO). The
-#   hash check catches a file swapped or changed between jobs; it cannot catch a compromised build job, which
-#   reports its own hash.
+#   version (-p:ContinuousIntegrationBuild=true, so the output does not depend on the build folder), smoke-checks
+#   its version, packs the tarball, reports its SHA-256 as the job output tarball_sha256 and uploads only the
+#   tarball as an artifact.
+# - verify needs version and macos and has only read permissions. On its own runner it checks out the same
+#   release commit and repeats macos's Restore, RoomKit check, Publish, Smoke check and Pack steps byte for byte.
+#   It downloads macos's artifact, checks that downloaded/ holds exactly the tarball, reports its own SHA-256 of
+#   that download as the job output tarball_sha256, and compares the two tarballs member by member with
+#   .github/scripts/compare-release.py (same names, types, exec bits and bytes; in
+#   PRWatch.staticwebassets.endpoints.json only the Last-Modified header values, which come from file times, may
+#   differ). It fails, and nothing is released, unless the downloaded tarball holds what verify built itself.
+# - release needs version, macos and verify. It downloads the artifact, checks that dist/ holds exactly the
+#   tarball and that its hash is both the one macos reported and the one verify computed, then sums, attests and
+#   publishes it. Only this job has write permissions; it builds nothing itself and has no checkout (gh names the
+#   repository through GH_REPO). So the attested bytes no longer rest only on a hash from the job that built them:
+#   a compromised macos job cannot get bytes attested that verify did not rebuild.
+# - The limit that remains: verify shares the runner image, the .NET SDK and the pinned RoomKit package with
+#   macos, so a fault in any of them is in both builds; and the Last-Modified strings in endpoints.json are
+#   checked only for their HTTP-date form, not for their values.
 # - A merged pull request from develop into main, titled "release vX.Y.Z", makes a release: vX.Y.Z (and its tag)
 #   on the merge commit (.github/scripts/release-version.sh). Closed-unmerged PRs, PRs from other branches and
 #   fork PRs are skipped by the version job's if:, and its first step checks the same again.
@@ -19,10 +30,10 @@
 #   SHA256SUMS, plus a build-provenance attestation for the tarball (check it with:
 #   gh attestation verify <tarball> --repo nothisisnotdaniel/prwatch).
 # - The builds are only ad-hoc signed (no signing certificate yet).
-# macos-tests and macos have only contents: read and packages: read; the GITHUB_TOKEN reaches dotnet only on their
-# Restore steps (NuGetPackageSourceCredentials_github), and gh only on "Check the RoomKit package", which pins the
-# restored package's bytes (roomkit.sha256) and checks its attestation from roomkit's release.yml on main before
-# any build imports the package.
+# macos-tests, macos and verify have only contents: read and packages: read; the GITHUB_TOKEN reaches dotnet only
+# on their Restore steps (NuGetPackageSourceCredentials_github), and gh only on "Check the RoomKit package", which
+# pins the restored package's bytes (roomkit.sha256) and checks its attestation from roomkit's release.yml on main
+# before any build imports the package.
 # PR fields, job outputs and the token reach the shell only through env: blocks, never through ${{ }} inside a
 # run: script. Actions are pinned to full commit SHAs (the tag each one had is in the trailing comment), so a
 # moved tag cannot run new code with the contents: write token.
@@ -241,7 +252,7 @@ jobs:
       # MSBuild reads every environment variable as a property, ignoring case, so a name like VERSION would
       # become $(Version) here. That is why the names are RELEASE_VERSION and RELEASE_TARGET.
       - name: Publish
-        run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version="$RELEASE_VERSION" -o "$RUNNER_TEMP/publish"
+        run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version="$RELEASE_VERSION" -p:ContinuousIntegrationBuild=true -o "$RUNNER_TEMP/publish"
 
       - name: Smoke check the published app
         run: |
@@ -293,10 +304,157 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-  release:
+  verify:
+    # Rebuilds the release commit on its own runner with macos's steps, byte for byte, and passes on only a tarball
+    # whose contents match its own build, with a hash it computed itself. Read permissions only.
     needs: [version, macos]
-    # Builds nothing: it checks, sums, attests and publishes the tarball the macos job made. It has no checkout,
-    # so no repository files sit on the runner of the one job with write permissions.
+    runs-on: macos-15
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      tarball_sha256: ${{ steps.check.outputs.tarball_sha256 }}
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.release_version }}
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.version.outputs.release_target }}
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        env:
+          NuGetPackageSourceCredentials_github: Username=github;Password=${{ secrets.GITHUB_TOKEN }}
+        run: dotnet restore src/PRWatch -r osx-arm64
+
+      - name: Check the RoomKit package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(sed -n 's/.*<PackageReference Include="RoomKit" Version="\[\([0-9][0-9.]*\)\]".*/\1/p' src/PRWatch/PRWatch.csproj)
+          if [ -z "$version" ]; then
+            echo "No pinned RoomKit version in src/PRWatch/PRWatch.csproj." >&2
+            exit 1
+          fi
+          package="${NUGET_PACKAGES:-$HOME/.nuget/packages}/roomkit/$version/roomkit.$version.nupkg"
+          if [ ! -f "$package" ] || [ -L "$package" ]; then
+            echo "RoomKit.$version.nupkg is not in the restored packages." >&2
+            exit 1
+          fi
+          actual=$(shasum -a 256 "$package" | awk '{ print $1 }')
+          pinned=""
+          if [ -f roomkit.sha256 ]; then
+            pinned=$(awk -v name="RoomKit.$version.nupkg" 'NR == 1 && NF == 2 && $2 == name { hash = $1 } END { if (NR == 1) print hash }' roomkit.sha256)
+          fi
+          if [ -z "$pinned" ] || [ "$pinned" != "$actual" ]; then
+            echo "RoomKit.$version.nupkg does not match roomkit.sha256." >&2
+            exit 1
+          fi
+          # Every attestation must come from roomkit's release.yml on main, run by a merged pull request on a
+          # GitHub-hosted runner; true only then. A pull_request run with refs/heads/main is a closed PR running
+          # main's own release.yml, so "merged" rests on that workflow's merged == true gate in roomkit.
+          if ! verified=$(gh attestation verify "$package" --repo nothisisnotdaniel/roomkit --cert-identity https://github.com/nothisisnotdaniel/roomkit/.github/workflows/release.yml@refs/heads/main --cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref refs/heads/main --deny-self-hosted-runners --format json --jq 'length > 0 and all(.[]; .verificationResult.signature.certificate | .githubWorkflowTrigger == "pull_request" and .sourceRepositoryRef == "refs/heads/main" and .runnerEnvironment == "github-hosted")') || [ "$verified" != "true" ]; then
+            echo "RoomKit.$version.nupkg has no valid roomkit release attestation." >&2
+            exit 1
+          fi
+
+      # MSBuild reads every environment variable as a property, ignoring case, so a name like VERSION would
+      # become $(Version) here. That is why the names are RELEASE_VERSION and RELEASE_TARGET.
+      - name: Publish
+        run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version="$RELEASE_VERSION" -p:ContinuousIntegrationBuild=true -o "$RUNNER_TEMP/publish"
+
+      - name: Smoke check the published app
+        run: |
+          ACTUAL="$("$RUNNER_TEMP/publish/PRWatch" version)"
+          if [ "$ACTUAL" != "PRWatch $RELEASE_VERSION" ]; then
+            echo "PRWatch version printed '$ACTUAL', expected 'PRWatch $RELEASE_VERSION'" >&2
+            exit 1
+          fi
+
+      - name: Pack
+        env:
+          # No ._ AppleDouble entries for extended attributes: the tarball holds only the publish output.
+          COPYFILE_DISABLE: "1"
+        run: |
+          NAME="prwatch-$RELEASE_VERSION-osx-arm64"
+          mkdir -p "$RUNNER_TEMP/pack" dist
+          mv "$RUNNER_TEMP/publish" "$RUNNER_TEMP/pack/$NAME"
+          if [ ! -f "$RUNNER_TEMP/pack/$NAME/wwwroot/index.html" ]; then
+            echo "The publish output has no wwwroot/index.html" >&2
+            exit 1
+          fi
+          # The updater installs this copy of itself with the release it swaps in (#9 adds the script).
+          if [ -L scripts/updater.sh ]; then
+            echo "scripts/updater.sh is a symlink" >&2
+            exit 1
+          fi
+          if [ -f scripts/updater.sh ]; then
+            cp scripts/updater.sh "$RUNNER_TEMP/pack/$NAME/updater.sh"
+            chmod 0755 "$RUNNER_TEMP/pack/$NAME/updater.sh"
+          else
+            echo "::warning::scripts/updater.sh is missing, so this tarball ships without the updater"
+          fi
+          tar -czf "dist/$NAME.tar.gz" -C "$RUNNER_TEMP/pack" "$NAME"
+
+      - name: Collect the build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: macos-release
+          path: downloaded
+
+      # Exactly the tarball in downloaded/, a regular file. Its hash, computed here and not taken from macos, is
+      # the job output the release job checks its own download against.
+      - name: Check and hash the downloaded tarball
+        id: check
+        run: |
+          TARBALL="prwatch-$RELEASE_VERSION-osx-arm64.tar.gz"
+          if [ ! -f "downloaded/$TARBALL" ] || [ -L "downloaded/$TARBALL" ]; then
+            echo "The downloaded artifact has no file $TARBALL" >&2
+            exit 1
+          fi
+          for entry in downloaded/* downloaded/.[!.]* downloaded/..?*; do
+            if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+              continue
+            fi
+            if [ "${entry#downloaded/}" != "$TARBALL" ]; then
+              echo "The downloaded artifact holds an unexpected file: ${entry#downloaded/}" >&2
+              exit 1
+            fi
+          done
+          # No pipe, so a failed shasum fails the step itself.
+          if ! ACTUAL="$(shasum -a 256 "downloaded/$TARBALL")"; then
+            echo "Could not hash downloaded/$TARBALL" >&2
+            exit 1
+          fi
+          ACTUAL="${ACTUAL%% *}"
+          case "$ACTUAL" in
+            '' | *[!0-9a-f]*)
+              echo "The hash of downloaded/$TARBALL is not 64 lower-case hex characters" >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#ACTUAL}" -ne 64 ]; then
+            echo "The hash of downloaded/$TARBALL is not 64 lower-case hex characters" >&2
+            exit 1
+          fi
+          echo "tarball_sha256=$ACTUAL" >> "$GITHUB_OUTPUT"
+
+      # Member by member: the tarball verify packed against the one macos uploaded. It reads both archives and
+      # extracts nothing.
+      - name: Compare the tarballs
+        run: python3 -I .github/scripts/compare-release.py "dist/prwatch-$RELEASE_VERSION-osx-arm64.tar.gz" "downloaded/prwatch-$RELEASE_VERSION-osx-arm64.tar.gz"
+
+  release:
+    needs: [version, macos, verify]
+    # Builds nothing: it checks, sums, attests and publishes the tarball the macos job made and verify matched. It
+    # has no checkout, so no repository files sit on the runner of the one job with write permissions.
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -312,12 +470,13 @@ jobs:
           name: macos-release
           path: dist
 
-      # Exactly the tarball, byte-identical to what macos hashed before the upload. The hash comes from the job
-      # output, a separate channel from the artifact store, and reaches the shell only through env:; it must be
-      # 64 lower-case hex characters before it is compared.
+      # Exactly the tarball, byte-identical to what macos hashed before the upload and to what verify hashed after
+      # its own download. Both hashes come from job outputs, a separate channel from the artifact store, and reach
+      # the shell only through env:; each must be 64 lower-case hex characters before it is compared.
       - name: Check the downloaded files
         env:
           TARBALL_SHA256: ${{ needs.macos.outputs.tarball_sha256 }}
+          VERIFIED_SHA256: ${{ needs.verify.outputs.tarball_sha256 }}
         run: |
           TARBALL="prwatch-$RELEASE_VERSION-osx-arm64.tar.gz"
           if [ ! -f "dist/$TARBALL" ] || [ -L "dist/$TARBALL" ]; then
@@ -343,6 +502,16 @@ jobs:
             echo "The reported hash of $TARBALL is not 64 lower-case hex characters" >&2
             exit 1
           fi
+          case "$VERIFIED_SHA256" in
+            '' | *[!0-9a-f]*)
+              echo "The verified hash of $TARBALL is not 64 lower-case hex characters" >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#VERIFIED_SHA256}" -ne 64 ]; then
+            echo "The verified hash of $TARBALL is not 64 lower-case hex characters" >&2
+            exit 1
+          fi
           # No pipe, so a failed shasum fails the step itself.
           if ! ACTUAL="$(shasum -a 256 "dist/$TARBALL")"; then
             echo "Could not hash dist/$TARBALL" >&2
@@ -351,6 +520,10 @@ jobs:
           ACTUAL="${ACTUAL%% *}"
           if [ "$ACTUAL" != "$TARBALL_SHA256" ]; then
             echo "dist/$TARBALL does not match the hash its build job reported" >&2
+            exit 1
+          fi
+          if [ "$ACTUAL" != "$VERIFIED_SHA256" ]; then
+            echo "dist/$TARBALL does not match the hash the verify job computed" >&2
             exit 1
           fi
 

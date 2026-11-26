@@ -113,7 +113,9 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     the block between `# roomkit:app-begin` and `# roomkit:app-end` (`ScriptTests` pins both). Install at login
     with auto-update, from `PRWatch/`: `scripts/launch-agent.sh install --release [--tailnet-host <host>]`. The
     updater ends `busy` while a review run holds `.update.lock`.
-  - `.github/workflows/`: CI on every push and PR, release on a merged `release vX.Y.Z` PR into `main`.
+  - `.github/workflows/`: CI on every push and PR, release on a merged `release vX.Y.Z` PR into `main` (a read-only
+    `verify` job rebuilds the release commit and compares its tarball with `.github/scripts/compare-release.py`,
+    `CompareReleaseTests`; `release` attests only bytes whose hash `verify` computed).
 - **Style:** C# like ControlRoom: file-scoped namespaces, `internal sealed` unless a type must be public, no
   primary constructors, no `var`, braces on every body, camelCase private fields without `_`; 0 warnings. The web
   app is mobile first (iPhone width), works in light and dark mode and shows fixed error texts, never exception
