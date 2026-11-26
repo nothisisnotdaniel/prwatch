@@ -45,7 +45,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#38](backlog/038-count-lines-exactly-in-restore-sh.md) Count lines exactly in restore.sh's token file check → 465-token-file-lines.bdc19d014a0b4ab0ae9c223f3ccc447a
 - [x] [#39](backlog/039-test-the-factory-pr-filter-with.md) Test the factory PR filter with an empty projects list → 466-empty-projects-tests.db5cc0a14ab14624affcad9db58d47be
 - [x] [#40](backlog/040-skip-the-poll-tree-kill-after.md) Skip the poll tree kill after the process has exited → 467-poll-kill-after-exit.6f47681007d64fe68e901d0d1bbcb7b8
-- [ ] [#41](backlog/041-cover-both-empty-values-for-each.md) Cover both empty values for each name in the runner environment tests
+- [x] [#41](backlog/041-cover-both-empty-values-for-each.md) Cover both empty values for each name in the runner environment tests → 468-runner-env-empty-tests.906a6828bd92479ea5626a3e4a7306e2
 - [ ] [#42](backlog/042-keep-the-login-state-after-an.md) Keep the login state after an error run that had an auth result
 - [ ] [#43](backlog/043-wait-for-the-run-timeout-timer.md) Wait for the run timeout timer in the AC-2 runner test
 - [ ] [#44](backlog/044-guard-the-lock-release-in-the.md) Guard the lock release in the runner's abandon path
