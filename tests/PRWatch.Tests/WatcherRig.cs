@@ -17,8 +17,14 @@ internal sealed class WatcherRig : IDisposable
 
     public static readonly TimeSpan Bound = TimeSpan.FromSeconds(10);
 
-    public WatcherRig(TimeSpan? timeout = null, string? searchPath = null, bool open = true)
+    /// <param name="pollOnClock">Runs the poll timeout on <see cref="Clock"/> instead of the system clock.</param>
+    /// <param name="afterExit">The poll runner's test hook (<see cref="PollRunner.AfterExit"/>), given this rig and the
+    /// timeout token.</param>
+    public WatcherRig(TimeSpan? timeout = null, string? searchPath = null, bool open = true, bool pollOnClock = false,
+        Func<WatcherRig, CancellationToken, Task>? afterExit = null)
     {
+        PollOnClock = pollOnClock;
+        AfterExit = afterExit is null ? null : token => afterExit(this, token);
         Folder = Path.Combine(Path.GetTempPath(), "prwatch-watcher-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Folder);
         Root = TestFactoryRoot.Create(Folder);
@@ -47,6 +53,11 @@ internal sealed class WatcherRig : IDisposable
 
     public string SearchPath { get; }
 
+    /// <summary>True when the poll timeout runs on <see cref="Clock"/>.</summary>
+    public bool PollOnClock { get; }
+
+    public Func<CancellationToken, Task>? AfterExit { get; }
+
     public FakeClock Clock { get; } = new(FakeClock.DefaultNow);
 
     public FakeReviewRunner Runner { get; } = new();
@@ -69,7 +80,13 @@ internal sealed class WatcherRig : IDisposable
         Runner.Status = Status;
         Runner.Clock = Clock;
         Ledger = new UsageLedger(DataFolder, Status, Clock);
-        Watcher = new Watcher(Settings, Status, new PollRunner(Timeout, SearchPath), Runner, Ledger, Clock);
+        Watcher = new Watcher(Settings, Status, Poller(), Runner, Ledger, Clock);
+    }
+
+    /// <summary>A poll runner with the rig's timeout, search path, clock choice and hook.</summary>
+    public PollRunner Poller()
+    {
+        return new PollRunner(Timeout, SearchPath, PollOnClock ? Clock : null) { AfterExit = AfterExit };
     }
 
     public void Change(string json)
