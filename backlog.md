@@ -40,7 +40,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#31](backlog/031-keep-a-live-review-s-update.md) Keep a live review's update lock when a second instance starts → 461-keep-live-update-lock.792106e26c9f4022947e469c2f0a3397
 - [x] [#32](backlog/032-note-why-the-roomkit-feed-tests.md) Note why the RoomKit check tests need bash → 462-note-bash-tests.eb792df3d9d245b7ba3839d8c89969b3
 - [x] [#35](backlog/035-put-prwatch-on-tailscale-and-add.md) Put PRWatch on Tailscale and add it to the iPhone home screen (after: #34)
-- [ ] [#36](backlog/036-keep-the-stored-github-packages-token.md) Keep the stored GitHub Packages token behind a keychain prompt
+- [x] [#36](backlog/036-keep-the-stored-github-packages-token.md) Keep the stored GitHub Packages token behind a keychain prompt → 463-keychain-packages-token.4e560a74f8f841ecb20dc079832e8f2d
 - [ ] [#37](backlog/037-check-the-roomkit-package-hash-in.md) Check the RoomKit package hash in restore.sh
 - [ ] [#38](backlog/038-count-lines-exactly-in-restore-sh.md) Count lines exactly in restore.sh's token file check
 - [ ] [#39](backlog/039-test-the-factory-pr-filter-with.md) Test the factory PR filter with an empty projects list
