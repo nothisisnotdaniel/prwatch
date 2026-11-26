@@ -502,6 +502,27 @@ public sealed partial class WebAppTests
         return match.Groups["body"].Value;
     }
 
+    [Fact]
+    public void SentTextShowsAfterAcceptedTap()
+    {
+        string app = RepoFiles.Read("src/PRWatch/wwwroot/app.js");
+        string css = RepoFiles.Read("src/PRWatch/wwwroot/prwatch.css");
+        Assert.Contains("sent: \"Sent\",", app, StringComparison.Ordinal);
+        Assert.Contains("element(\"p\", \"pr-sent\", Texts.sent)", app, StringComparison.Ordinal);
+        int tapStart = app.IndexOf("async function tap(", StringComparison.Ordinal);
+        int okCheck = app.IndexOf("if (!response.ok)", tapStart, StringComparison.Ordinal);
+        int assign = app.IndexOf("sent = { project", tapStart, StringComparison.Ordinal);
+        int refresh = app.IndexOf("await refresh();", tapStart, StringComparison.Ordinal);
+        Assert.True(okCheck > 0 && okCheck < assign && assign < refresh);
+        Assert.Contains("sent.headSha === pr.headSha", app, StringComparison.Ordinal);
+        Assert.Contains("else if (isSent(pr))", app, StringComparison.Ordinal);
+        Assert.Contains("if (!match || match.request)", app, StringComparison.Ordinal);
+        Assert.Contains("clearSentIfDone(prs);", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("action ===", app[okCheck..refresh], StringComparison.Ordinal);
+        Assert.Contains(".pr-sent", css, StringComparison.Ordinal);
+        Assert.Contains("prefers-color-scheme: dark", css, StringComparison.Ordinal);
+    }
+
     [GeneratedRegex("<script[^>]*>[^<]*</script>")]
     private static partial Regex ScriptTag();
 
