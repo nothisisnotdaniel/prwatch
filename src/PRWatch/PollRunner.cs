@@ -286,7 +286,9 @@ internal sealed class PollRunner
     }
 
     /// <summary>Kills the process with its tree, unless it has already exited. A process whose state cannot be told
-    /// is still killed, which is the fail-safe side.</summary>
+    /// is still killed, which is the fail-safe side. A small window stays open: the process can exit and be reaped
+    /// between the check and <see cref="Process.Kill(bool)"/>; closing it would need pidfd or process-group
+    /// signalling.</summary>
     private void Kill(Process process)
     {
         if (HasExited(process))
