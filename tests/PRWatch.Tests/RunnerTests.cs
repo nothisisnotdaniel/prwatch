@@ -983,6 +983,31 @@ public sealed class RunnerTests
         }
     }
 
+    // --- job 444: every non-fatal write error is caught ---------------------------------------------
+
+    [Fact]
+    public async Task Run_WhoseLedgerWritesAlwaysThrow_EndsNormally_ReleasesTheLock_AndTheNextRunGoes()
+    {
+        using Rig rig = new();
+        rig.Watch.Ledger.Writer = (_, _) => throw new InvalidOperationException("ledger-marker");
+        FakeClaude.SetStream(rig.Claude, Result());
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+
+        await WatcherRig.WaitFor(() => Task.FromResult(!rig.Runner.IsBusy
+            && rig.Watch.Status.Current.Runs.TryGetValue("Alpha-1", out RunStatus? run)
+            && run.Result == RunStatus.Ok), "runs[Alpha-1].result is ok");
+        Assert.Null(rig.Lock.Holder());
+        Assert.False(Directory.Exists(rig.Lock.Path));
+        Assert.Equal(StatusError.LedgerWriteFailed, rig.Watch.Status.Current.LastError?.Code);
+        LedgerEntry entry = Assert.Single(rig.Watch.Ledger.Entries);
+        Assert.NotNull(entry.EndedAt);
+
+        Assert.True(rig.Runner.TryStart(Alpha1 with { Number = 2 }));
+        await rig.WaitForEnd("Alpha-2");
+        Assert.Equal(RunStatus.Ok, rig.Watch.Status.Current.Runs["Alpha-2"].Result);
+    }
+
     // --- job 443: a kill stops the output reads ----------------------------------------------------
 
     [Fact]
