@@ -50,4 +50,3 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#43](backlog/043-wait-for-the-run-timeout-timer.md) Wait for the run timeout timer in the AC-2 runner test
 - [ ] [#44](backlog/044-guard-the-lock-release-in-the.md) Guard the lock release in the runner's abandon path
 - [ ] [#45](backlog/045-use-a-stored-sequence-instead-of.md) Use a stored sequence instead of the clock to tell whether a request was used
-- [?] [#46](backlog/046-announce-the-armed-consent-or-merge.md) Announce the armed Consent or Merge state to screen readers
