@@ -56,9 +56,10 @@ internal static class PrWatchApp
         return Path.Combine(data, Options.DataFolderName);
     }
 
-    /// <summary>Registers the status and settings stores and the usage ledger (all in the data folder, clock from
-    /// the container),
-    /// loads the settings at start, so an unreadable file shows in the status at once, and adds the watcher with
+    /// <summary>Registers the status and settings stores, the usage ledger and the update lock (all in the data
+    /// folder, clock from the container),
+    /// loads the settings at start, so an unreadable file shows in the status at once, removes an update lock that
+    /// PRWatch left behind, and adds the watcher with
     /// its poll runner and the review runner (<see cref="ClaudeReviewRunner"/> with the config value
     /// <c>RunTimeoutSeconds</c>, unless one is already registered), which is stopped with the app.</summary>
     public static void AddServices(RoomServices services)
@@ -70,6 +71,8 @@ internal static class PrWatchApp
         services.Services.AddSingleton(provider => new SettingsStore(
             folder, factoryRoot, provider.GetRequiredService<StatusStore>()));
         services.Services.AddHostedService<SettingsLoader>();
+        services.Services.AddSingleton(_ => new UpdateLock(folder));
+        services.Services.AddHostedService<UpdateLockCleaner>();
         services.Services.AddSingleton(provider => new UsageLedger(
             folder, provider.GetRequiredService<StatusStore>(), provider.GetRequiredService<TimeProvider>()));
         services.Services.AddSingleton(_ => PollRunner.FromConfiguration(services.Configuration));
@@ -78,6 +81,7 @@ internal static class PrWatchApp
             provider.GetRequiredService<StatusStore>(),
             provider.GetRequiredService<UsageLedger>(),
             provider.GetRequiredService<TimeProvider>(),
+            provider.GetRequiredService<UpdateLock>(),
             ClaudeReviewRunner.TimeoutFrom(services.Configuration)));
         // Hosted services stop in reverse order: the watcher first, then the running claude run.
         services.Services.AddHostedService<RunnerStopper>();
@@ -94,8 +98,9 @@ internal static class PrWatchApp
         routes.App.MapGet(SettingsRoute, (HttpContext context, SettingsStore settings) =>
             Json(context, SettingsStore.View(settings.Current).ToJsonString(), StatusCodes.Status200OK));
         routes.MapPost(SettingsRoute, ChangeSettings);
-        routes.App.MapGet(StatusRoute, (HttpContext context, StatusStore status) =>
-            Json(context, JsonSerializer.Serialize(status.Current, PrWatchJson.Options), StatusCodes.Status200OK));
+        routes.App.MapGet(StatusRoute, (HttpContext context, StatusStore status, UpdateLock updateLock) =>
+            Json(context, JsonSerializer.Serialize(status.Current with { UpdateLock = updateLock.Holder() },
+                PrWatchJson.Options), StatusCodes.Status200OK));
         routes.App.MapGet(PrsRoute, (HttpContext context, SettingsStore settings, StatusStore status) =>
             Json(context, PrsView(status.Current, settings.Current).ToJsonString(), StatusCodes.Status200OK));
         routes.MapPost(ReviewRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
@@ -309,6 +314,39 @@ internal static class PrWatchApp
         public Task StartAsync(CancellationToken cancellationToken)
         {
             services.GetRequiredService<SettingsStore>();
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>At start, before the watcher, removes a <c>.update.lock</c> that holds PRWatch's marker (left by a
+    /// run that never reached its end, no run goes yet) and writes the lock's holder to the status when it changed. Any other
+    /// <c>.update.lock</c> is the updater's and stays.</summary>
+    private sealed class UpdateLockCleaner : IHostedService
+    {
+        private readonly UpdateLock updateLock;
+
+        private readonly StatusStore status;
+
+        public UpdateLockCleaner(UpdateLock updateLock, StatusStore status)
+        {
+            this.updateLock = updateLock;
+            this.status = status;
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            updateLock.Release();
+            string? holder = updateLock.Holder();
+            if (status.Current.UpdateLock != holder)
+            {
+                status.Update(previous => previous with { UpdateLock = holder });
+            }
+
             return Task.CompletedTask;
         }
 

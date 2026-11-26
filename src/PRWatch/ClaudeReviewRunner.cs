@@ -15,7 +15,9 @@ namespace PRWatch;
 /// The stream-json output is read line by line and only figures are kept (cost, token counts, plan usage, the
 /// credential's expiry and fixed codes); no text of the output, stderr or the prompt is stored or logged. A run
 /// past the timeout (on the <see cref="TimeProvider"/>), with too much output or still going when the app stops
-/// is killed with its process tree.</summary>
+/// is killed with its process tree. Every run holds the update lock (<see cref="UpdateLock"/>) from before its
+/// process starts to the end of its <c>finally</c>, touched every <see cref="LockTouchInterval"/> on the
+/// <see cref="TimeProvider"/>, so RoomKit's updater never swaps the server under a review.</summary>
 internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 {
     public const int MaxLineBytes = 1024 * 1024;
@@ -36,6 +38,9 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
     public const int MaxModelFields = 20;
 
+    /// <summary>How often a run sets the lock folder's mtime (the updater counts a lock past 60 min as stale).</summary>
+    public static readonly TimeSpan LockTouchInterval = TimeSpan.FromMinutes(10);
+
     /// <summary>The <c>rate_limit_info.status</c> values that are not a limit.</summary>
     public static readonly string[] AllowedStatuses = ["allowed", "allowed_warning"];
 
@@ -49,21 +54,25 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
     private readonly TimeProvider time;
 
+    private readonly UpdateLock updateLock;
+
     private Run? current;
 
     private bool stopping;
 
     public ClaudeReviewRunner(SettingsStore settings, StatusStore status, UsageLedger ledger, TimeProvider time,
-        TimeSpan timeout)
+        UpdateLock updateLock, TimeSpan timeout)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(status);
         ArgumentNullException.ThrowIfNull(ledger);
         ArgumentNullException.ThrowIfNull(time);
+        ArgumentNullException.ThrowIfNull(updateLock);
         this.settings = settings;
         this.status = status;
         this.ledger = ledger;
         this.time = time;
+        this.updateLock = updateLock;
         Timeout = timeout;
     }
 
@@ -100,7 +109,8 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
     }
 
     /// <summary>Starts the run, or returns false and starts nothing: while a run is going or the app stops, while
-    /// <c>enabled</c> is off, while the token brake holds (written to the status then), for a project not in the discovered list, a number outside 1..999999999 or a head that
+    /// <c>enabled</c> is off, while the token brake holds (written to the status then), while the update lock is
+    /// taken by anyone else (its holder written to the status then), for a project not in the discovered list, a number outside 1..999999999 or a head that
     /// is no sha, with no model for the mode (<c>model_unknown</c>) or no usable claude (<c>claude_not_found</c>).
     /// On true the run's <c>headSha</c> and <c>startedAt</c> are in the status and its start is in the usage
     /// ledger.</summary>
@@ -166,10 +176,22 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                 return false;
             }
 
+            if (!updateLock.TryAcquire())
+            {
+                string? holder = updateLock.Holder() ?? UpdateLock.Updater;
+                status.Update(previous => previous with { UpdateLock = holder });
+                return false;
+            }
+
             Process? process = Start(argv, root, prs);
             if (process is null)
             {
-                status.RecordError(StatusError.RunFailed);
+                updateLock.Release();
+                status.Update(previous => previous with
+                {
+                    UpdateLock = updateLock.Holder(),
+                    LastError = new StatusError(StatusError.RunFailed, time.GetUtcNow()),
+                });
                 return false;
             }
 
@@ -183,8 +205,11 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                     && StatusError.RunCodes.Contains(error.Code, StringComparer.Ordinal)
                         ? null
                         : previous.LastError,
+                UpdateLock = UpdateLock.Run,
             });
             Run run = new(process, key, pick.HeadSha, entry, new CancellationTokenSource(Timeout, time));
+            run.Touch = time.CreateTimer(_ => updateLock.Touch(time.GetUtcNow()), null, LockTouchInterval,
+                LockTouchInterval);
             current = run;
             run.Monitor = Task.Run(() => MonitorAsync(run));
             return true;
@@ -321,6 +346,10 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
     {
         try
         {
+            // Released before endedAt is written, so a status that shows the end never shows the lock still held;
+            // for that short gap the lock is gone while the run still counts as going (the process has exited).
+            run.Touch?.Dispose();
+            updateLock.Release();
             DateTimeOffset now = time.GetUtcNow();
             bool auth = !failed && (figures.AuthInResult
                 || (figures.Results == 0 && exitCode is not 0 && exitCode is not null && authInStderr));
@@ -384,11 +413,15 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                     }),
                     Login = login,
                     Brake = TokenBrake.Evaluate(previous.PlanUsage, entries, brakeSettings, now),
+                    UpdateLock = updateLock.Holder(),
                 };
             });
         }
         finally
         {
+            // Again, in case the end could not be written: the lock never outlives the run.
+            run.Touch?.Dispose();
+            updateLock.Release();
             run.Timeout.Dispose();
             run.Process.Dispose();
             lock (gate)
@@ -700,6 +733,9 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
         public CancellationTokenSource Timeout { get; }
 
         public Task? Monitor { get; set; }
+
+        /// <summary>The timer that touches the update lock while the run goes.</summary>
+        public ITimer? Touch { get; set; }
 
         public string? Reason => Volatile.Read(ref reason);
 

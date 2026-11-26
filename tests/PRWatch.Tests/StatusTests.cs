@@ -15,7 +15,7 @@ public sealed class StatusTests
         "{\"lastPoll\":null,\"runs\":{},\"prs\":[],\"skipped\":[],\"pick\":null,"
         + "\"brake\":{\"holding\":false,\"reason\":null,\"until\":null},"
         + "\"login\":{\"state\":\"unknown\",\"credentialExpiresAt\":null,\"expiresSoon\":false},"
-        + "\"planUsage\":null,\"lastError\":null}";
+        + "\"planUsage\":null,\"updateLock\":null,\"lastError\":null}";
 
     [Fact]
     public async Task Get_OnAFreshHost_IsTheInitialStatus()
@@ -60,7 +60,7 @@ public sealed class StatusTests
             + "\"result\":\"clean\",\"costUsd\":null,\"isError\":null,\"modelUsage\":null}},\"prs\":[],\"skipped\":[],\"pick\":null,\"brake\":{\"holding\":true,\"reason\":\"runs_per_hour\","
             + "\"until\":\"2026-11-26T11:00:00.000Z\"},\"login\":{\"state\":\"ok\","
             + "\"credentialExpiresAt\":\"2026-12-26T10:00:00.000Z\",\"expiresSoon\":false},\"planUsage\":null,"
-            + "\"lastError\":null}",
+            + "\"updateLock\":null,\"lastError\":null}",
             body);
         using JsonDocument file = JsonDocument.Parse(File.ReadAllBytes(StatusFile(factory)));
         Assert.Equal("2026-11-26T10:00:00.000Z", file.RootElement.GetProperty("lastPoll").GetString());

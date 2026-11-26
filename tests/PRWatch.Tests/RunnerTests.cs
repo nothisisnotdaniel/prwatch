@@ -648,6 +648,137 @@ public sealed class RunnerTests
         Assert.Equal(new BrakeStatus(), rig.Watch.Status.Current.Brake);
     }
 
+    // --- job 428: the update lock -----------------------------------------------------------------
+
+    [Fact]
+    public async Task UpdateLock_IsHeldWithTheMarkerWhileTheRunGoes_AndGoneWhenItEnds()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, "#wait", Result());
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+
+        Assert.True(Directory.Exists(rig.Lock.Path));
+        Assert.True(File.Exists(rig.Lock.MarkerPath));
+        Assert.Equal(UpdateLock.Run, rig.Watch.Status.Current.UpdateLock);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+                File.GetUnixFileMode(rig.Lock.Path));
+        }
+
+        FakeClaude.Release(rig.Claude);
+        await rig.WaitForEnd("Alpha-1");
+
+        Assert.False(Directory.Exists(rig.Lock.Path));
+        Assert.Null(rig.Watch.Status.Current.UpdateLock);
+    }
+
+    [Fact]
+    public async Task UpdateLock_HeldByTheUpdater_StartsNothing_LeavesItAlone_AndTheNextPickRunsOnceItIsGone()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, Result());
+        Directory.CreateDirectory(rig.Lock.Path);
+        string inside = Path.Combine(rig.Lock.Path, "updater-file");
+        File.WriteAllText(inside, "keep");
+        DateTime old = new(2026, 11, 26, 8, 0, 0, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(rig.Lock.Path, old);
+
+        Assert.False(rig.Runner.TryStart(Alpha1));
+
+        Assert.Empty(rig.Calls());
+        Assert.False(rig.Runner.IsBusy);
+        Assert.Equal(UpdateLock.Updater, rig.Watch.Status.Current.UpdateLock);
+        Assert.False(rig.Watch.Status.Current.Runs.ContainsKey("Alpha-1"));
+        Assert.Empty(rig.Watch.Ledger.Entries);
+        Assert.Equal(["updater-file"], Directory.GetFileSystemEntries(rig.Lock.Path).Select(Path.GetFileName));
+        Assert.Equal("keep", File.ReadAllText(inside));
+        Assert.Equal(old, Directory.GetLastWriteTimeUtc(rig.Lock.Path));
+
+        Directory.Delete(rig.Lock.Path, recursive: true);
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        await rig.WaitForEnd("Alpha-1");
+
+        Assert.Single(rig.Calls());
+        Assert.Null(rig.Watch.Status.Current.UpdateLock);
+        Assert.False(Directory.Exists(rig.Lock.Path));
+    }
+
+    [Fact]
+    public async Task UpdateLock_IsTouchedEveryTenMinutesOfTheRunnersClock()
+    {
+        // A run timeout past the 80 min the clock moves, so the run is still going at every check.
+        using Rig rig = new(TimeSpan.FromHours(24));
+        FakeClaude.SetStream(rig.Claude, "#wait", Result());
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        DateTime old = new(2026, 11, 26, 8, 0, 0, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(rig.Lock.Path, old);
+
+        rig.Watch.Clock.Advance(TimeSpan.FromMinutes(9));
+        Assert.Equal(old, Directory.GetLastWriteTimeUtc(rig.Lock.Path));
+        rig.Watch.Clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(rig.Watch.Clock.GetUtcNow().UtcDateTime, Directory.GetLastWriteTimeUtc(rig.Lock.Path));
+        for (int round = 0; round < 7; round++)
+        {
+            rig.Watch.Clock.Advance(TimeSpan.FromMinutes(10));
+            Assert.Equal(rig.Watch.Clock.GetUtcNow().UtcDateTime, Directory.GetLastWriteTimeUtc(rig.Lock.Path));
+        }
+
+        Assert.True(rig.Runner.IsBusy);
+        FakeClaude.Release(rig.Claude);
+        await rig.WaitForEnd("Alpha-1");
+        Assert.False(Directory.Exists(rig.Lock.Path));
+    }
+
+    [Theory]
+    [InlineData("link-to-a-folder-with-the-marker")]
+    [InlineData("dangling-link")]
+    [InlineData("file")]
+    public void UpdateLock_ThatIsASymlinkOrAFile_CountsAsTheUpdater_IsNeverFollowedOrDeleted_AndStartsNoRun(
+        string how)
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, Result());
+        string target = Path.Combine(rig.Watch.Folder, "elsewhere");
+        string targetMarker = Path.Combine(target, UpdateLock.MarkerName);
+        switch (how)
+        {
+            case "link-to-a-folder-with-the-marker":
+                Directory.CreateDirectory(target);
+                File.WriteAllText(targetMarker, "");
+                Directory.CreateSymbolicLink(rig.Lock.Path, target);
+                break;
+            case "dangling-link":
+                Directory.CreateSymbolicLink(rig.Lock.Path, target);
+                break;
+            default:
+                File.WriteAllText(rig.Lock.Path, "a file");
+                break;
+        }
+
+        Assert.Equal(UpdateLock.Updater, rig.Lock.Holder());
+        Assert.False(rig.Lock.Release());
+        Assert.False(rig.Runner.TryStart(Alpha1));
+
+        Assert.Empty(rig.Calls());
+        Assert.Equal(UpdateLock.Updater, rig.Watch.Status.Current.UpdateLock);
+        if (how == "file")
+        {
+            Assert.Equal("a file", File.ReadAllText(rig.Lock.Path));
+        }
+        else
+        {
+            Assert.Equal(target, new FileInfo(rig.Lock.Path).LinkTarget);
+        }
+
+        if (how == "link-to-a-folder-with-the-marker")
+        {
+            Assert.True(File.Exists(targetMarker));
+            Assert.Equal([UpdateLock.MarkerName], Directory.GetFileSystemEntries(target).Select(Path.GetFileName));
+        }
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private static string Result(double cost = 0.25, bool isError = false, string text = "done",
@@ -695,7 +826,8 @@ public sealed class RunnerTests
 
     /// <summary>A <see cref="WatcherRig"/> with <c>enabled</c> on, a <see cref="FakeClaude"/> (in
     /// <c>&lt;folder&gt;/claude-bin</c>, calls to <c>&lt;folder&gt;/claude-calls.jsonl</c>) as
-    /// <c>claudePath</c>, and a <see cref="ClaudeReviewRunner"/> on the rig's stores and clock.</summary>
+    /// <c>claudePath</c>, and a <see cref="ClaudeReviewRunner"/> on the rig's stores, clock and an
+    /// <see cref="UpdateLock"/> in the data folder.</summary>
     private sealed class Rig : IDisposable
     {
         public Rig(TimeSpan? timeout = null)
@@ -704,11 +836,15 @@ public sealed class RunnerTests
             CallsFile = Path.Combine(Watch.Folder, "claude-calls.jsonl");
             Claude = FakeClaude.Write(Path.Combine(Watch.Folder, "claude-bin"), CallsFile);
             Watch.Change("{\"enabled\":true,\"claudePath\":" + JsonSerializer.Serialize(Claude) + "}");
-            Runner = new ClaudeReviewRunner(Watch.Settings, Watch.Status, Watch.Ledger, Watch.Clock,
+            Lock = new UpdateLock(Watch.DataFolder);
+            Runner = new ClaudeReviewRunner(Watch.Settings, Watch.Status, Watch.Ledger, Watch.Clock, Lock,
                 timeout ?? TimeSpan.FromSeconds(ClaudeReviewRunner.DefaultTimeoutSeconds));
         }
 
         public WatcherRig Watch { get; }
+
+        /// <summary>The update lock in the rig's data folder.</summary>
+        public UpdateLock Lock { get; }
 
         public string CallsFile { get; }
 
