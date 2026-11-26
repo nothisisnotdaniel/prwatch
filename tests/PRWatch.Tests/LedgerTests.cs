@@ -170,6 +170,74 @@ public sealed class LedgerTests : IDisposable
         Assert.Equal(1.5, Assert.Single(new UsageLedger(folder, status, clock).Entries).CostUsd);
     }
 
+    // --- job 444: every non-fatal write error is caught ---------------------------------------------
+
+    public static TheoryData<string> NonFatalTypes => ["invalid", "notsupported", "argument"];
+
+    internal static Exception Make(string type, string message)
+    {
+        return type switch
+        {
+            "invalid" => new InvalidOperationException(message),
+            "notsupported" => new NotSupportedException(message),
+            "argument" => new ArgumentException(message),
+            _ => throw new ArgumentOutOfRangeException(nameof(type)),
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(NonFatalTypes))]
+    public void WriterThatThrows_KeepsTheEntriesInMemory_AndRecordsLedgerWriteFailed(string type)
+    {
+        UsageLedger ledger = new(folder, status, clock)
+        {
+            Writer = (_, _) => throw Make(type, "ledger-marker"),
+        };
+
+        LedgerEntry entry = ledger.Start(clock.GetUtcNow());
+        Assert.Equal(StatusError.LedgerWriteFailed, status.Current.LastError?.Code);
+        Assert.Equal(entry, Assert.Single(ledger.Entries));
+        clock.Advance(TimeSpan.FromMinutes(4));
+        ledger.End(entry, clock.GetUtcNow(), 0.75);
+
+        LedgerEntry ended = Assert.Single(ledger.Entries);
+        Assert.Equal(FakeClock.DefaultNow, ended.StartedAt);
+        Assert.Equal(FakeClock.DefaultNow.AddMinutes(4), ended.EndedAt);
+        Assert.Equal(0.75, ended.CostUsd);
+        Assert.Equal(new StatusError(StatusError.LedgerWriteFailed, clock.GetUtcNow()), status.Current.LastError);
+        Assert.False(System.IO.File.Exists(File));
+    }
+
+    [Fact]
+    public void AfterTheWriterWorksAgain_TheNextSave_WritesEveryInMemoryEntry()
+    {
+        UsageLedger ledger = new(folder, status, clock)
+        {
+            Writer = (_, _) => throw new InvalidOperationException("ledger-marker"),
+        };
+        LedgerEntry first = ledger.Start(clock.GetUtcNow());
+        ledger.End(first, clock.GetUtcNow().AddMinutes(2), 0.5);
+
+        ledger.Writer = PrivateFileWriter.Write;
+        clock.Advance(TimeSpan.FromMinutes(5));
+        ledger.Start(clock.GetUtcNow());
+
+        Assert.Equal(ledger.Entries, new UsageLedger(folder, status, clock).Entries);
+        Assert.Equal(2, ledger.Entries.Count);
+    }
+
+    [Fact]
+    public void WriterThatThrowsOutOfMemory_LeavesStart()
+    {
+        UsageLedger ledger = new(folder, status, clock)
+        {
+            Writer = (_, _) => throw new OutOfMemoryException(),
+        };
+
+        Assert.Throws<OutOfMemoryException>(() => ledger.Start(clock.GetUtcNow()));
+        Assert.Null(status.Current.LastError);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(folder))

@@ -266,6 +266,144 @@ public sealed class StatusTests
         }
     }
 
+    // --- job 444: every non-fatal write error is caught ---------------------------------------------
+
+    [Theory]
+    [MemberData(nameof(LedgerTests.NonFatalTypes), MemberType = typeof(LedgerTests))]
+    public void WriterThatThrows_UpdateReturnsTheChange_WithStatusWriteFailed(string type)
+    {
+        using TempFolder temp = new();
+        FakeClock clock = new(FakeClock.DefaultNow);
+        StatusStore store = new(temp.Path, clock)
+        {
+            Writer = (_, _) => throw LedgerTests.Make(type, "status-marker"),
+        };
+        clock.Advance(TimeSpan.FromMinutes(3));
+
+        Status next = store.Update(status => status with { LastPoll = FakeClock.DefaultNow });
+
+        Assert.Equal(FakeClock.DefaultNow, next.LastPoll);
+        Assert.Equal(new StatusError(StatusError.StatusWriteFailed, clock.GetUtcNow()), next.LastError);
+        Assert.Same(next, store.Current);
+        Assert.False(File.Exists(store.Path));
+    }
+
+    [Fact]
+    public void AfterTheWriterWorksAgain_TheNextUpdate_WritesTheLatestStatus()
+    {
+        using TempFolder temp = new();
+        FakeClock clock = new(FakeClock.DefaultNow);
+        StatusStore store = new(temp.Path, clock)
+        {
+            Writer = (_, _) => throw new InvalidOperationException("status-marker"),
+        };
+        store.Update(status => status with { LastPoll = FakeClock.DefaultNow });
+
+        store.Writer = PrivateFileWriter.Write;
+        Status latest = store.Update(status => status with
+        {
+            Runs = status.Runs.SetItem("Alpha-1", new RunStatus { ExitCode = 0 }),
+        });
+
+        Status reloaded = new StatusStore(temp.Path, clock).Current;
+        Assert.Equal(FakeClock.DefaultNow, reloaded.LastPoll);
+        Assert.Equal(0, reloaded.Runs["Alpha-1"].ExitCode);
+        Assert.Equal(StatusError.StatusWriteFailed, reloaded.LastError?.Code);
+        Assert.Equal(JsonSerializer.Serialize(latest, PrWatchJson.FileOptions),
+            JsonSerializer.Serialize(reloaded, PrWatchJson.FileOptions));
+    }
+
+    [Fact]
+    public async Task WriterThatThrows_StoresNeitherTheMessageNorTheType_InTheRouteOrTheFile()
+    {
+        const string Marker = "secret-marker-7f3a";
+        using PrWatchFactory factory = new();
+        using HttpClient client = await Start(factory);
+        StatusStore store = factory.Services.GetRequiredService<StatusStore>();
+        UsageLedger ledger = factory.Services.GetRequiredService<UsageLedger>();
+        ledger.Writer = (_, _) => throw new NotSupportedException(Marker);
+        ledger.Start(factory.Clock.GetUtcNow());
+        store.Writer = (_, _) => throw new InvalidOperationException(Marker);
+        store.Update(status => status with { LastPoll = factory.Clock.GetUtcNow() });
+
+        string body = await client.GetStringAsync(Route);
+        Assert.Contains("\"lastError\":{\"code\":\"status_write_failed\",\"at\":\"2026-11-26T10:00:00.000Z\"}",
+            body, StringComparison.Ordinal);
+
+        store.Writer = PrivateFileWriter.Write;
+        store.Update(status => status);
+        string file = File.ReadAllText(StatusFile(factory));
+        foreach (string text in new[] { body, file })
+        {
+            Assert.DoesNotContain(Marker, text, StringComparison.Ordinal);
+            Assert.DoesNotContain("Exception", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("InvalidOperation", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("NotSupported", text, StringComparison.Ordinal);
+        }
+
+        using JsonDocument parsed = JsonDocument.Parse(file);
+        Assert.Equal(["code", "at"],
+            parsed.RootElement.GetProperty("lastError").EnumerateObject().Select(property => property.Name));
+    }
+
+    [Theory]
+    [InlineData(typeof(OutOfMemoryException), false)]
+    [InlineData(typeof(InsufficientExecutionStackException), false)]
+    [InlineData(typeof(AccessViolationException), false)]
+    [InlineData(typeof(ThreadInterruptedException), false)]
+    [InlineData(typeof(IOException), true)]
+    [InlineData(typeof(UnauthorizedAccessException), true)]
+    [InlineData(typeof(InvalidOperationException), true)]
+    [InlineData(typeof(NotSupportedException), true)]
+    [InlineData(typeof(ArgumentException), true)]
+    public void IsNonFatal_IsFalseOnlyForTheFatalRuntimeTypes(Type type, bool expected)
+    {
+        Exception exception = (Exception)Activator.CreateInstance(type)!;
+
+        Assert.Equal(expected, StoreWrites.IsNonFatal(exception));
+    }
+
+    [Fact]
+    public void WriterThatThrowsOutOfMemory_LeavesUpdate_AndKeepsTheStatus()
+    {
+        using TempFolder temp = new();
+        StatusStore store = new(temp.Path, new FakeClock(FakeClock.DefaultNow))
+        {
+            Writer = (_, _) => throw new OutOfMemoryException(),
+        };
+        Status before = store.Current;
+
+        Assert.Throws<OutOfMemoryException>(() => store.Update(status => status with { LastPoll = FakeClock.DefaultNow }));
+        Assert.Same(before, store.Current);
+    }
+
+    [Fact]
+    public void ChangeThatThrows_LeavesUpdate_AndKeepsTheStatus()
+    {
+        using TempFolder temp = new();
+        StatusStore store = new(temp.Path, new FakeClock(FakeClock.DefaultNow));
+        Status before = store.Current;
+
+        Assert.Throws<InvalidOperationException>(() => store.Update(_ => throw new InvalidOperationException("change")));
+        Assert.Same(before, store.Current);
+        Assert.Null(store.Current.LastError);
+    }
+
+    [Fact]
+    public void BeforeSaveThatThrows_LeavesUpdate_AndKeepsTheStatus()
+    {
+        using TempFolder temp = new();
+        StatusStore store = new(temp.Path, new FakeClock(FakeClock.DefaultNow))
+        {
+            BeforeSave = _ => throw new InvalidOperationException("before-save"),
+        };
+        Status before = store.Current;
+
+        Assert.Throws<InvalidOperationException>(() => store.Update(status => status with { LastPoll = FakeClock.DefaultNow }));
+        Assert.Same(before, store.Current);
+        Assert.Null(store.Current.LastError);
+    }
+
     private static async Task<HttpClient> Start(PrWatchFactory factory)
     {
         using (HttpClient anonymous = factory.CreateClient())
@@ -280,5 +418,25 @@ public sealed class StatusTests
     private static string StatusFile(PrWatchFactory factory)
     {
         return Path.Combine(factory.DataFolder, "status.json");
+    }
+
+    /// <summary>A temp folder of its own, deleted on dispose.</summary>
+    private sealed class TempFolder : IDisposable
+    {
+        public TempFolder()
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "prwatch-status-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
     }
 }

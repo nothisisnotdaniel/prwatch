@@ -5,8 +5,10 @@ using System.Text.Json.Nodes;
 namespace PRWatch;
 
 /// <summary>Holds the status in memory and writes it to <c>status.json</c> in the data folder after every
-/// <see cref="Update"/>, atomically through <see cref="SafeFileWriter"/> as <c>0600</c> (never through a symlink).
-/// A failed write keeps the status in memory with <c>lastError</c> <c>status_write_failed</c>. On start a valid
+/// <see cref="Update"/>, atomically through <see cref="PrivateFileWriter"/> as <c>0600</c> (never through a symlink).
+/// A failed serialization or write (any exception <see cref="StoreWrites.IsNonFatal"/> accepts) keeps the status in
+/// memory with <c>lastError</c> <c>status_write_failed</c> (the fixed code and the clock's time only); a fatal
+/// runtime exception, or one from the change or <see cref="BeforeSave"/>, leaves the call. On start a valid
 /// existing file is loaded; an invalid one is ignored (and replaced by the next update).</summary>
 internal sealed class StatusStore
 {
@@ -36,6 +38,11 @@ internal sealed class StatusStore
     /// <see cref="Update"/> throw. The identity in production; never set from config or a request.</summary>
     internal Func<Status, Status> BeforeSave { get; set; } = status => status;
 
+    /// <summary>Test-only: writes the serialized status to its path, so a test can make a save fail.
+    /// <see cref="PrivateFileWriter.Write"/> in production; never set from config or a request. The save reads it
+    /// under the store's lock, but setting it takes no lock: tests set it only while no other save runs.</summary>
+    internal Action<string, byte[]> Writer { get; set; } = PrivateFileWriter.Write;
+
     /// <summary>The current status.</summary>
     public Status Current
     {
@@ -58,9 +65,9 @@ internal sealed class StatusStore
             Status next = BeforeSave(change(current));
             try
             {
-                PrivateFileWriter.Write(Path, JsonSerializer.SerializeToUtf8Bytes(next, PrWatchJson.FileOptions));
+                Writer(Path, JsonSerializer.SerializeToUtf8Bytes(next, PrWatchJson.FileOptions));
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (StoreWrites.IsNonFatal(exception))
             {
                 next = next with { LastError = new StatusError(StatusError.StatusWriteFailed, time.GetUtcNow()) };
             }

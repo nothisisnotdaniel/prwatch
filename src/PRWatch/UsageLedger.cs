@@ -15,9 +15,10 @@ internal sealed record LedgerEntry
 
 /// <summary>The usage ledger (<c>usage-ledger.json</c> in the data folder): one entry per started run, at most
 /// <see cref="MaxEntries"/>. Every write first drops the entries that started more than <see cref="Keep"/> ago and
-/// goes atomically through <see cref="PrivateFileWriter"/> as <c>0600</c> (never through a symlink). A failed write
-/// keeps the entries in memory and records <c>ledger_write_failed</c>. A missing, invalid or over-1-MiB file loads
-/// as empty.</summary>
+/// goes atomically through <see cref="PrivateFileWriter"/> as <c>0600</c> (never through a symlink). A failed
+/// serialization or write (any exception <see cref="StoreWrites.IsNonFatal"/> accepts) keeps the entries in memory
+/// and records only the fixed code <c>ledger_write_failed</c>; a fatal runtime exception leaves the call. A missing,
+/// invalid or over-1-MiB file loads as empty.</summary>
 internal sealed class UsageLedger
 {
     public const string FileName = "usage-ledger.json";
@@ -50,6 +51,11 @@ internal sealed class UsageLedger
 
     /// <summary>The full path of <c>usage-ledger.json</c>.</summary>
     public string Path { get; }
+
+    /// <summary>Test-only: writes the serialized ledger to its path, so a test can make a save fail.
+    /// <see cref="PrivateFileWriter.Write"/> in production; never set from config or a request. The save reads it
+    /// under the store's lock, but setting it takes no lock: tests set it only while no other save runs.</summary>
+    internal Action<string, byte[]> Writer { get; set; } = PrivateFileWriter.Write;
 
     /// <summary>A copy of the entries, oldest start first.</summary>
     public IReadOnlyList<LedgerEntry> Entries
@@ -112,11 +118,11 @@ internal sealed class UsageLedger
 
         try
         {
-            PrivateFileWriter.Write(Path, JsonSerializer.SerializeToUtf8Bytes(
+            Writer(Path, JsonSerializer.SerializeToUtf8Bytes(
                 new LedgerFile { Entries = [.. entries] }, PrWatchJson.FileOptions));
             return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (StoreWrites.IsNonFatal(exception))
         {
             return false;
         }
