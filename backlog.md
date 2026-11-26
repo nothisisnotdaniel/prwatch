@@ -43,7 +43,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#36](backlog/036-keep-the-stored-github-packages-token.md) Keep the stored GitHub Packages token behind a keychain prompt
 - [ ] [#37](backlog/037-check-the-roomkit-package-hash-in.md) Check the RoomKit package hash in restore.sh
 - [ ] [#38](backlog/038-count-lines-exactly-in-restore-sh.md) Count lines exactly in restore.sh's token file check
-- [?] [#39](backlog/039-test-the-factory-pr-filter-with.md) Test the factory PR filter with an empty projects list
+- [ ] [#39](backlog/039-test-the-factory-pr-filter-with.md) Test the factory PR filter with an empty projects list
 - [ ] [#40](backlog/040-skip-the-poll-tree-kill-after.md) Skip the poll tree kill after the process has exited
 - [?] [#41](backlog/041-cover-both-empty-values-for-each.md) Cover both empty values for each name in the runner environment tests
 - [ ] [#42](backlog/042-keep-the-login-state-after-an.md) Keep the login state after an error run that had an auth result
