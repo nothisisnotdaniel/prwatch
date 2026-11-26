@@ -13,13 +13,14 @@ const PushAppTexts = {
 };
 
 // Service worker (sw.js). Caches only the app shell. Bump the version whenever a shell file changes.
-const CacheVersion = "v1";
+const CacheVersion = "v2";
 const CacheName = "prwatch-shell-" + CacheVersion;
 
 const Shell = [
   "/",
   "/index.html",
   "/app.css",
+  "/prwatch.css",
   "/app.js",
   "/token.js",
   "/room.js",

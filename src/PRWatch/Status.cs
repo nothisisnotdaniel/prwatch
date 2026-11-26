@@ -117,10 +117,14 @@ internal sealed record PrStatus
     public string? Request { get; init; }
 
     public RoundStatus? Round { get; init; }
+
+    /// <summary>The PR's stage from the poll: one of <see cref="PrRules.Stages"/>, else <c>null</c>.</summary>
+    public string? Stage { get; init; }
 }
 
-/// <summary>A PR's latest review round: its number, the head it reviewed, whether that is the PR's head now and
-/// whether it came out clean.</summary>
+/// <summary>A PR's latest review round: its number, the head it reviewed, whether that is the PR's head now,
+/// whether it came out clean, its tests verdict (one of <see cref="PrRules.TestResults"/> or <c>null</c>) and
+/// whether GitHub can merge it (<c>null</c> when unknown).</summary>
 internal sealed record RoundStatus
 {
     public required int K { get; init; }
@@ -130,6 +134,10 @@ internal sealed record RoundStatus
     public required bool Current { get; init; }
 
     public required bool Clean { get; init; }
+
+    public string? Tests { get; init; }
+
+    public bool? Mergeable { get; init; }
 }
 
 /// <summary>A project the last poll could not read or the watcher leaves alone, with a fixed reason code.</summary>
@@ -292,6 +300,24 @@ internal static partial class PrRules
 
     public static readonly string[] Requests = ["review", "merge", "cancel"];
 
+    /// <summary>The PR stages of <c>job.py pr poll</c> that PRWatch keeps.</summary>
+    public static readonly string[] Stages = ["review", "merged", "closed"];
+
+    /// <summary>The round tests verdicts of <c>job.py pr poll</c> that PRWatch keeps.</summary>
+    public static readonly string[] TestResults = ["pass", "fail", "none"];
+
+    /// <summary><c>null</c> or one of <see cref="Stages"/>.</summary>
+    public static bool IsStage(string? stage)
+    {
+        return stage is null || Stages.Contains(stage, StringComparer.Ordinal);
+    }
+
+    /// <summary><c>null</c> or one of <see cref="TestResults"/>.</summary>
+    public static bool IsTests(string? tests)
+    {
+        return tests is null || TestResults.Contains(tests, StringComparer.Ordinal);
+    }
+
     /// <summary>A project name that can be the first part of a <c>runs</c> key.</summary>
     public static bool IsProjectName(string? name)
     {
@@ -368,7 +394,8 @@ internal static partial class PrRules
             && (pr.Url is null || IsPullUrl(pr.Url, pr.Number))
             && IsSha(pr.HeadSha)
             && IsRequest(pr.Request)
-            && (pr.Round is null || IsSha(pr.Round.HeadSha));
+            && IsStage(pr.Stage)
+            && (pr.Round is null || (IsSha(pr.Round.HeadSha) && IsTests(pr.Round.Tests)));
     }
 
     [GeneratedRegex(@"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\z",

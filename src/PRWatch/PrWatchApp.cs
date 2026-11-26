@@ -13,6 +13,8 @@ internal static class PrWatchApp
 
     public const string StatusRoute = "/api/status";
 
+    public const string PrsRoute = "/api/prs";
+
     public const string ReviewRoute = "/api/prs/review";
 
     public const string MergeRoute = "/api/prs/merge";
@@ -83,7 +85,8 @@ internal static class PrWatchApp
         services.Services.AddHostedService(provider => provider.GetRequiredService<Watcher>());
     }
 
-    /// <summary>Maps <c>GET</c>/<c>POST /api/settings</c>, <c>GET /api/status</c> and the request routes
+    /// <summary>Maps <c>GET</c>/<c>POST /api/settings</c>, <c>GET /api/status</c>, <c>GET /api/prs</c> and the
+    /// request routes
     /// <c>POST /api/prs/review</c>, <c>/api/prs/merge</c> and <c>/api/prs/cancel</c>.</summary>
     public static void Map(RoomRoutes routes)
     {
@@ -93,6 +96,8 @@ internal static class PrWatchApp
         routes.MapPost(SettingsRoute, ChangeSettings);
         routes.App.MapGet(StatusRoute, (HttpContext context, StatusStore status) =>
             Json(context, JsonSerializer.Serialize(status.Current, PrWatchJson.Options), StatusCodes.Status200OK));
+        routes.App.MapGet(PrsRoute, (HttpContext context, SettingsStore settings, StatusStore status) =>
+            Json(context, PrsView(status.Current, settings.Current).ToJsonString(), StatusCodes.Status200OK));
         routes.MapPost(ReviewRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
             SubmitRequest(context, RequestWriter.Review, settings, status, watcher));
         routes.MapPost(MergeRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
@@ -158,6 +163,58 @@ internal static class PrWatchApp
             ["headSha"] = request.HeadSha,
         };
         return Json(context, done.ToJsonString(), StatusCodes.Status200OK);
+    }
+
+    /// <summary>The PR list as the web app shows it: <c>{"prs":[…]}</c> ordered by project then number, each PR
+    /// with its round, its last run (from <c>runs[&lt;project&gt;-&lt;n&gt;]</c>, only for a valid key) and the
+    /// taps of <see cref="PrActions.For"/>. A run of no listed PR never appears.</summary>
+    public static JsonObject PrsView(Status status, Settings settings)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        ArgumentNullException.ThrowIfNull(settings);
+        JsonArray prs = [];
+        foreach (PrStatus pr in status.Prs
+            .OrderBy(item => item.Project, StringComparer.Ordinal)
+            .ThenBy(item => item.Number))
+        {
+            string key = PrRules.RunKey(pr.Project, pr.Number);
+            RunStatus? run = PrRules.IsRunKey(key) && status.Runs.TryGetValue(key, out RunStatus? found) ? found : null;
+            prs.Add(new JsonObject
+            {
+                ["project"] = pr.Project,
+                ["number"] = pr.Number,
+                ["title"] = pr.Title,
+                ["author"] = pr.Author,
+                ["url"] = pr.Url,
+                ["trusted"] = pr.Trusted,
+                ["headSha"] = pr.HeadSha,
+                ["stage"] = pr.Stage,
+                ["request"] = pr.Request,
+                ["round"] = pr.Round is { } round
+                    ? new JsonObject
+                    {
+                        ["k"] = round.K,
+                        ["current"] = round.Current,
+                        ["clean"] = round.Clean,
+                        ["tests"] = round.Tests,
+                        ["mergeable"] = round.Mergeable,
+                    }
+                    : null,
+                ["run"] = run is null
+                    ? null
+                    : new JsonObject
+                    {
+                        ["startedAt"] = JsonSerializer.SerializeToNode(run.StartedAt, PrWatchJson.Options),
+                        ["endedAt"] = JsonSerializer.SerializeToNode(run.EndedAt, PrWatchJson.Options),
+                        ["result"] = run.Result,
+                        ["costUsd"] = run.CostUsd,
+                    },
+                ["actions"] = new JsonArray([.. PrActions.For(pr, settings)
+                    .Select(action => (JsonNode?)JsonValue.Create(action))]),
+            });
+        }
+
+        return new JsonObject { ["prs"] = prs };
     }
 
     private static IResult RequestError(HttpContext context, string code, int status)

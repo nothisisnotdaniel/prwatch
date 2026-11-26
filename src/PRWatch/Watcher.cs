@@ -440,6 +440,7 @@ internal sealed class Watcher : BackgroundService
             Trusted = trusted,
             Request = request,
             Round = round,
+            Stage = ReadString(item, "stage") is { } stage && PrRules.IsStage(stage) ? stage : null,
         };
     }
 
@@ -485,7 +486,16 @@ internal sealed class Watcher : BackgroundService
             return false;
         }
 
-        round = new RoundStatus { K = number, HeadSha = headSha, Current = current, Clean = clean };
+        string? tests = ReadString(value, "tests");
+        round = new RoundStatus
+        {
+            K = number,
+            HeadSha = headSha,
+            Current = current,
+            Clean = clean,
+            Tests = tests is not null && PrRules.IsTests(tests) ? tests : null,
+            Mergeable = ReadBool(value, "mergeable"),
+        };
         return true;
     }
 

@@ -76,7 +76,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   - `PRWatch.slnx`, `Directory.Build.props` (nullable, implicit usings, code style in build), `.editorconfig`,
     `nuget.config` (the RoomKit feed).
   - `src/PRWatch/`: `Program.cs`, `PrWatchApp` (options and routes), the watcher, the `claude` runner, the brake
-    (`TokenBrake`, `UsageLedger`), the request writer, settings and status; `wwwroot/` (`index.html`, `room.js`, `app.js`, icons, manifest).
+    (`TokenBrake`, `UsageLedger`), the request writer, the taps of a PR (`PrActions`, served by `GET /api/prs`),
+    settings and status; `wwwroot/` (`index.html`, `room.js`, `app.js`, `prwatch.css`, icons, manifest).
   - `tests/PRWatch.Tests/`: xUnit tests with a temporary factory root and fake `job.py` / `claude` scripts.
     `FakeJobPy` writes a `job.py` that prints `poll-output.json` (exit `poll-exit`, pause `poll-sleep`) and logs its
     argv, cwd and environment to a calls file outside the root; `WatcherRig` builds a watcher on its stores and a
