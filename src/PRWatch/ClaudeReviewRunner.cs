@@ -398,8 +398,19 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                 // Already gone.
             }
 
-            Task<bool> stderr = MatchErrorAsync(run.Process.StandardError.BaseStream);
-            await ReadOutputAsync(run.Process.StandardOutput.BaseStream, run, figures);
+            // Both reads stop when the run is ended (Run.End cancels Reads after the kill), so a descendant that
+            // escaped the tree kill and still holds the pipes cannot keep the monitor from reaching Finish.
+            CancellationToken reads = run.Reads.Token;
+            Task<bool> stderr = MatchErrorAsync(run.Process.StandardError.BaseStream, reads);
+            try
+            {
+                await ReadOutputAsync(run.Process.StandardOutput.BaseStream, run, figures, reads);
+            }
+            catch (OperationCanceledException) when (reads.IsCancellationRequested)
+            {
+                // Stopped by End: the run already has its reason; go on to the exit and Finish.
+            }
+
             authInStderr = await stderr;
             await run.Process.WaitForExitAsync(CancellationToken.None);
             exitCode = run.Process.ExitCode;
@@ -501,6 +512,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
             run.Touch?.Dispose();
             updateLock.Release();
             run.Timeout.Dispose();
+            run.Reads.Dispose();
             run.Process.Dispose();
             lock (gate)
             {
@@ -513,15 +525,17 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
     }
 
     /// <summary>Reads the output line by line: a line over <see cref="MaxLineBytes"/> is skipped, and past
-    /// <see cref="MaxOutputBytes"/> in total the run ends as <c>output_too_large</c>.</summary>
-    private async Task ReadOutputAsync(Stream stream, Run run, StreamFigures figures)
+    /// <see cref="MaxOutputBytes"/> in total the run ends as <c>output_too_large</c>. Throws
+    /// <see cref="OperationCanceledException"/> once <paramref name="reads"/> is cancelled (the run was
+    /// ended).</summary>
+    private async Task ReadOutputAsync(Stream stream, Run run, StreamFigures figures, CancellationToken reads)
     {
         byte[] chunk = new byte[64 * 1024];
         using MemoryStream line = new();
         bool skipping = false;
         long total = 0;
         int read;
-        while ((read = await stream.ReadAsync(chunk)) > 0)
+        while ((read = await stream.ReadAsync(chunk, reads)) > 0)
         {
             total += read;
             if (total > MaxOutputBytes)
@@ -748,8 +762,8 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
     /// <summary>Reads stderr to its end so the child never blocks on a full pipe, keeps at most
     /// <see cref="MaxErrorBytes"/>, and only matches them against the auth pattern; the text is then thrown
-    /// away.</summary>
-    private static async Task<bool> MatchErrorAsync(Stream stream)
+    /// away. Once <paramref name="reads"/> is cancelled (the run was ended) it stops and returns <c>false</c>.</summary>
+    private static async Task<bool> MatchErrorAsync(Stream stream, CancellationToken reads)
     {
         byte[] kept = new byte[MaxErrorBytes];
         int length = 0;
@@ -757,7 +771,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
         int read;
         try
         {
-            while ((read = await stream.ReadAsync(chunk)) > 0)
+            while ((read = await stream.ReadAsync(chunk, reads)) > 0)
             {
                 int take = Math.Min(read, MaxErrorBytes - length);
                 Array.Copy(chunk, 0, kept, length, take);
@@ -767,6 +781,10 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
             return AuthPattern().IsMatch(Encoding.UTF8.GetString(kept, 0, length));
         }
         catch (IOException)
+        {
+            return false;
+        }
+        catch (OperationCanceledException) when (reads.IsCancellationRequested)
         {
             return false;
         }
@@ -784,8 +802,9 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
     [GeneratedRegex(@"\A[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex FieldPattern();
 
-    /// <summary>One running process, its <c>runs</c> key and head, its ledger entry, its timeout and the first reason it was ended
-    /// for (<c>timeout</c>, <c>output_too_large</c>, <c>stopped</c>).</summary>
+    /// <summary>One running process, its <c>runs</c> key and head, its ledger entry, its timeout, the signal that
+    /// stops its output reads and the first reason it was ended for (<c>timeout</c>, <c>output_too_large</c>,
+    /// <c>stopped</c>).</summary>
     private sealed class Run
     {
         private string? reason;
@@ -810,6 +829,10 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
         public CancellationTokenSource Timeout { get; }
 
+        /// <summary>Cancelled by <see cref="End"/> after the kill, so the stdout and stderr reads stop even while a
+        /// descendant that escaped the tree kill still holds the pipes; disposed in <c>Finish</c>.</summary>
+        public CancellationTokenSource Reads { get; } = new();
+
         public Task? Monitor { get; set; }
 
         /// <summary>The timer that touches the update lock while the run goes.</summary>
@@ -817,8 +840,9 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
         public string? Reason => Volatile.Read(ref reason);
 
-        /// <summary>Records <paramref name="why"/> unless a reason is already set, and kills the process
-        /// tree.</summary>
+        /// <summary>Records <paramref name="why"/> unless a reason is already set, kills the process tree and then
+        /// stops the output reads. Never throws, also after <c>Finish</c> (a late stop, dispose or
+        /// timeout).</summary>
         public void End(string why)
         {
             Interlocked.CompareExchange(ref reason, why, null);
@@ -830,6 +854,15 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                 or NotSupportedException)
             {
                 // Already gone (or disposed).
+            }
+
+            try
+            {
+                Reads.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Finish has run: nothing is read any more.
             }
         }
     }
