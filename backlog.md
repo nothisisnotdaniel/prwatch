@@ -48,3 +48,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [?] [#41](backlog/041-cover-both-empty-values-for-each.md) Cover both empty values for each name in the runner environment tests
 - [?] [#42](backlog/042-keep-the-login-state-after-an.md) Keep the login state after an error run that had an auth result
 - [?] [#43](backlog/043-wait-for-the-run-timeout-timer.md) Wait for the run timeout timer in the AC-2 runner test
+- [?] [#44](backlog/044-guard-the-lock-release-in-the.md) Guard the lock release in the runner's abandon path
