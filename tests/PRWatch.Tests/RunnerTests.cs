@@ -527,6 +527,90 @@ public sealed class RunnerTests
     }
 
     [Fact]
+    public async Task Timeout_AfterAnAuthResult_KeepsTheLoginState_AndTheWatcherStartsTheNextRun()
+    {
+        using Rig rig = new(TimeSpan.FromSeconds(60));
+        FakeClaude.SetStream(rig.Claude, Result(isError: true, text: "Invalid API key · Please run /login"),
+            RateLimit(0.16, 0.05, "allowed", "1764158400"), "#wait");
+        string before = rig.Watch.Status.Current.Login.State;
+
+        using Watcher watcher = new(rig.Watch.Settings, rig.Watch.Status,
+            new PollRunner(TimeSpan.FromSeconds(60)), rig.Runner, rig.Watch.Ledger, rig.Watch.Clock);
+        rig.Watch.Output([WatcherRig.Pr("Alpha", 1)]);
+        await watcher.PollOnceAsync(CancellationToken.None);
+        await WatcherRig.WaitFor(() => Task.FromResult(rig.Watch.Status.Current.PlanUsage is not null),
+            "the result line and the rate-limit event to be read");
+        Assert.True(rig.Runner.IsBusy);
+        rig.Watch.Clock.Advance(TimeSpan.FromSeconds(61));
+        await rig.WaitForEnd("Alpha-1");
+
+        Assert.Equal(RunStatus.Timeout, rig.Watch.Status.Current.Runs["Alpha-1"].Result);
+        Assert.NotEqual(LoginStatus.NeedsLogin, rig.Watch.Status.Current.Login.State);
+        Assert.Equal(before, rig.Watch.Status.Current.Login.State);
+
+        FakeClaude.SetStream(rig.Claude, Result());
+        rig.Watch.Output([WatcherRig.Pr("Alpha", 1), WatcherRig.Pr("Alpha", 2)]);
+        await watcher.PollOnceAsync(CancellationToken.None);
+        await WatcherRig.WaitFor(() => Task.FromResult(rig.Calls().Count == 2), "the next run to start");
+    }
+
+    [Fact]
+    public async Task Timeout_WithAnAuthTextOnStderr_KeepsTheLoginState()
+    {
+        using Rig rig = new(TimeSpan.FromSeconds(60));
+        FakeClaude.SetStream(rig.Claude, "{\"type\":\"system\"}", "#wait");
+        FakeClaude.SetStderr(rig.Claude, "Error: Not logged in. Run claude auth login.");
+        string before = rig.Watch.Status.Current.Login.State;
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        await WatcherRig.WaitFor(() => Task.FromResult(rig.Calls().Count == 1), "the run to start");
+        Assert.True(rig.Runner.IsBusy);
+        rig.Watch.Clock.Advance(TimeSpan.FromSeconds(61));
+        await rig.WaitForEnd("Alpha-1");
+
+        RunStatus run = rig.Watch.Status.Current.Runs["Alpha-1"];
+        Assert.Equal(RunStatus.Timeout, run.Result);
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.Equal(before, rig.Watch.Status.Current.Login.State);
+    }
+
+    [Fact]
+    public async Task Stop_AfterAnAuthResult_IsNoNeedsLogin()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, Result(isError: true, text: "Invalid API key · Please run /login"),
+            RateLimit(0.16, 0.05, "allowed", "1764158400"), "#wait");
+        string before = rig.Watch.Status.Current.Login.State;
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        await WatcherRig.WaitFor(() => Task.FromResult(rig.Watch.Status.Current.PlanUsage is not null),
+            "the result line and the rate-limit event to be read");
+        await rig.Runner.StopAsync(CancellationToken.None);
+        await rig.WaitForEnd("Alpha-1");
+
+        Assert.Equal(RunStatus.Stopped, rig.Watch.Status.Current.Runs["Alpha-1"].Result);
+        Assert.NotEqual(LoginStatus.NeedsLogin, rig.Watch.Status.Current.Login.State);
+        Assert.Equal(before, rig.Watch.Status.Current.Login.State);
+    }
+
+    [Fact]
+    public async Task Timeout_AfterAGoodResult_SetsTheLoginOk()
+    {
+        using Rig rig = new(TimeSpan.FromSeconds(60));
+        FakeClaude.SetStream(rig.Claude, Result(), RateLimit(0.16, 0.05, "allowed", "1764158400"), "#wait");
+        Assert.NotEqual(LoginStatus.Ok, rig.Watch.Status.Current.Login.State);
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        await WatcherRig.WaitFor(() => Task.FromResult(rig.Watch.Status.Current.PlanUsage is not null),
+            "the result line and the rate-limit event to be read");
+        rig.Watch.Clock.Advance(TimeSpan.FromSeconds(61));
+        await rig.WaitForEnd("Alpha-1");
+
+        Assert.Equal(RunStatus.Timeout, rig.Watch.Status.Current.Runs["Alpha-1"].Result);
+        Assert.Equal(LoginStatus.Ok, rig.Watch.Status.Current.Login.State);
+    }
+
+    [Fact]
     public async Task PostSettings_ResetsNeedsLoginToUnknown()
     {
         using PrWatchFactory factory = new();

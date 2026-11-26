@@ -84,7 +84,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   plan usage. Stop starting runs when the 5-hour or weekly utilization passes its setting, when PRWatch's own
   rolling 5 h / 7 d cost sum passes its setting, after 3 runs in an hour, or at once on a rate limit until
   `resetsAt`. An auth error (`is_error` with an auth message) pauses every run as "needs login" with no retry
-  loop; warn 7 days before `credential_expires_at`.
+  loop; only a run whose result is `auth` sets "needs login" (a run killed as `timeout`, `output_too_large` or
+  `stopped` never does, whatever its stream or stderr said); warn 7 days before `credential_expires_at`.
 - **Layout:**
   - `PRWatch.slnx`, `Directory.Build.props` (nullable, implicit usings, code style in build), `.editorconfig`,
     `nuget.config` (RoomKit from GitHub Packages), `roomkit.sha256` (the pinned package's SHA-256), `README.md`.
