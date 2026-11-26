@@ -21,7 +21,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#12](backlog/012-verify-the-roomkit-package-signature-in.md) Verify the RoomKit package signature in CI (after: #1) → 430-roomkit-signature-ci.0c91bd8ba359453e94f1e4c8273d544b
 - [x] [#13](backlog/013-build-the-headless-allow-list-per.md) Build the headless allow-list per PR
 - [ ] [#14](backlog/014-decide-whether-the-projects-setting-filters.md) Decide whether the projects setting filters factory PRs (after: #3)
-- [?] [#15](backlog/015-report-a-clean-exit-that-races.md) Report a clean exit that races the poll timeout as success
+- [ ] [#15](backlog/015-report-a-clean-exit-that-races.md) Report a clean exit that races the poll timeout as success
 - [?] [#16](backlog/016-stop-a-test-from-changing-process.md) Stop a test from changing process-wide environment variables
 - [?] [#17](backlog/017-set-needs-login-only-for-auth.md) Set needs_login only for auth failures, not for timeouts
 - [?] [#18](backlog/018-kill-the-claude-process-when-the.md) Kill the claude process when the status update fails after start
