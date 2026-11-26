@@ -50,8 +50,8 @@ internal static class PrWatchApp
 
     /// <summary>Registers the status and settings stores (both in the data folder, clock from the container),
     /// loads the settings at start, so an unreadable file shows in the status at once, and adds the watcher with
-    /// its poll runner and the review runner (<see cref="NullReviewRunner"/> unless one is already
-    /// registered).</summary>
+    /// its poll runner and the review runner (<see cref="ClaudeReviewRunner"/> with the config value
+    /// <c>RunTimeoutSeconds</c>, unless one is already registered), which is stopped with the app.</summary>
     public static void AddServices(RoomServices services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -62,7 +62,13 @@ internal static class PrWatchApp
             folder, factoryRoot, provider.GetRequiredService<StatusStore>()));
         services.Services.AddHostedService<SettingsLoader>();
         services.Services.AddSingleton(_ => PollRunner.FromConfiguration(services.Configuration));
-        services.Services.TryAddSingleton<IReviewRunner, NullReviewRunner>();
+        services.Services.TryAddSingleton<IReviewRunner>(provider => new ClaudeReviewRunner(
+            provider.GetRequiredService<SettingsStore>(),
+            provider.GetRequiredService<StatusStore>(),
+            provider.GetRequiredService<TimeProvider>(),
+            ClaudeReviewRunner.TimeoutFrom(services.Configuration)));
+        // Hosted services stop in reverse order: the watcher first, then the running claude run.
+        services.Services.AddHostedService<RunnerStopper>();
         services.Services.AddSingleton<Watcher>();
         services.Services.AddHostedService(provider => provider.GetRequiredService<Watcher>());
     }
@@ -78,7 +84,7 @@ internal static class PrWatchApp
             Json(context, JsonSerializer.Serialize(status.Current, PrWatchJson.Options), StatusCodes.Status200OK));
     }
 
-    private static async Task<IResult> ChangeSettings(HttpContext context, SettingsStore settings)
+    private static async Task<IResult> ChangeSettings(HttpContext context, SettingsStore settings, StatusStore status)
     {
         byte[]? body = await ReadCapped(context.Request, MaxSettingsBodyBytes);
         if (body is null)
@@ -107,6 +113,8 @@ internal static class PrWatchApp
             return Invalid(context, change.Fields);
         }
 
+        // A saved change is the user's way back from "needs login": the next run checks the login again.
+        status.Update(previous => previous with { Login = previous.Login with { State = LoginStatus.Unknown } });
         return Json(context, SettingsStore.View(change.Saved).ToJsonString(), StatusCodes.Status200OK);
     }
 
@@ -169,6 +177,28 @@ internal static class PrWatchApp
         public Task StopAsync(CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>Stops the <see cref="ClaudeReviewRunner"/> (kills a running run, recorded as <c>stopped</c>)
+    /// when the host stops.</summary>
+    private sealed class RunnerStopper : IHostedService
+    {
+        private readonly IReviewRunner runner;
+
+        public RunnerStopper(IReviewRunner runner)
+        {
+            this.runner = runner;
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            return runner is ClaudeReviewRunner claude ? claude.StopAsync(cancellationToken) : Task.CompletedTask;
         }
     }
 }

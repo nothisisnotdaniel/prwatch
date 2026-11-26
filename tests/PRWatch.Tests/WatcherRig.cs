@@ -63,6 +63,8 @@ internal sealed class WatcherRig : IDisposable
         Watcher?.Dispose();
         Status = new StatusStore(DataFolder, Clock);
         Settings = new SettingsStore(DataFolder, Root, Status);
+        Runner.Status = Status;
+        Runner.Clock = Clock;
         Watcher = new Watcher(Settings, Status, new PollRunner(Timeout, SearchPath), Runner, Clock);
     }
 

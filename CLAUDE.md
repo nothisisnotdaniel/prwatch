@@ -80,7 +80,12 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     `FakeJobPy` writes a `job.py` that prints `poll-output.json` (exit `poll-exit`, pause `poll-sleep`) and logs its
     argv, cwd and environment to a calls file outside the root; `WatcherRig` builds a watcher on its stores without
     a host; `FakeClock` timers fire on `Advance`; `FakeReviewRunner` stands in for the runner
-    (`PrWatchFactory.TestServices`). The poll timeout is the config value `PollTimeoutSeconds` (default 120).
+    (`PrWatchFactory.TestServices`; like the real runner it writes the run start to the status). `FakeClaude`
+    writes an executable `python3` fake `claude` in the test's folder that logs argv, cwd and environment, prints
+    `stream.jsonl` (`#wait` blocks until a `release` file, `#flood` floods), writes `stderr.txt` and exits with
+    `exit-code`. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
+    `RunTimeoutSeconds` (default 3600).
+  - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`).
   - `scripts/launch-agent.sh`, `scripts/updater.sh`: RoomKit's copies; change only the block between
     `# roomkit:app-begin` and `# roomkit:app-end`.
   - `.github/workflows/`: CI on every push and PR, release on a merged `release vX.Y.Z` PR into `main`.

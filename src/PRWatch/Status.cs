@@ -26,15 +26,35 @@ internal sealed record Status
 
     public LoginStatus Login { get; init; } = new();
 
+    /// <summary>The plan usage of the last <c>rate_limit_event</c> of a run, or <c>null</c> before the first.</summary>
+    public PlanUsage? PlanUsage { get; init; }
+
     public StatusError? LastError { get; init; }
 
     public static Status Initial { get; } = new();
 }
 
-/// <summary>One PR's last run: the head it reviewed, when it started and ended, the exit code and the
-/// <c>result</c> of its stream-json output.</summary>
+/// <summary>One PR's last run: the head it reviewed, when it started and ended, the exit code, the fixed outcome
+/// code (<see cref="Results"/>) and the figures of its last stream-json <c>result</c> event: the cumulative cost,
+/// whether any <c>result</c> was an error and the token counts per model (numbers only).</summary>
 internal sealed record RunStatus
 {
+    public const string Ok = "ok";
+
+    public const string Error = "error";
+
+    public const string Budget = "budget";
+
+    public const string Timeout = "timeout";
+
+    public const string OutputTooLarge = "output_too_large";
+
+    public const string Auth = "auth";
+
+    public const string Stopped = "stopped";
+
+    public static readonly string[] Results = [Ok, Error, Budget, Timeout, OutputTooLarge, Auth, Stopped];
+
     public string? HeadSha { get; init; }
 
     public DateTimeOffset? StartedAt { get; init; }
@@ -44,6 +64,33 @@ internal sealed record RunStatus
     public int? ExitCode { get; init; }
 
     public string? Result { get; init; }
+
+    public double? CostUsd { get; init; }
+
+    public bool? IsError { get; init; }
+
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>>? ModelUsage { get; init; }
+}
+
+/// <summary>The Claude plan usage from a run's last <c>rate_limit_event</c>: the five-hour and seven-day windows,
+/// whether the plan said it is limited, and when PRWatch read it.</summary>
+internal sealed record PlanUsage
+{
+    public UsageWindow? FiveHour { get; init; }
+
+    public UsageWindow? SevenDay { get; init; }
+
+    public bool Limited { get; init; }
+
+    public DateTimeOffset? At { get; init; }
+}
+
+/// <summary>One plan usage window: its <c>utilization</c> and when it resets.</summary>
+internal sealed record UsageWindow
+{
+    public double? Utilization { get; init; }
+
+    public DateTimeOffset? ResetsAt { get; init; }
 }
 
 /// <summary>One open PR as the last poll saw it. <see cref="Title"/>, <see cref="Author"/> and <see cref="Url"/>
@@ -138,9 +185,23 @@ internal sealed record LoginStatus
 
     public static readonly string[] LoginStates = [Unknown, Ok, NeedsLogin];
 
+    /// <summary>How long before the credential expires PRWatch warns.</summary>
+    public static readonly TimeSpan WarnBefore = TimeSpan.FromDays(7);
+
     public string State { get; init; } = Unknown;
 
     public DateTimeOffset? CredentialExpiresAt { get; init; }
+
+    /// <summary>True when now is within <see cref="WarnBefore"/> of <see cref="CredentialExpiresAt"/> (or past
+    /// it).</summary>
+    public bool ExpiresSoon { get; init; }
+
+    /// <summary>Whether a credential that expires at <paramref name="expiresAt"/> expires soon at
+    /// <paramref name="now"/>.</summary>
+    public static bool IsExpiringSoon(DateTimeOffset? expiresAt, DateTimeOffset now)
+    {
+        return expiresAt is { } at && now >= at - WarnBefore;
+    }
 }
 
 /// <summary>The last error: a fixed code and when it happened.</summary>
@@ -157,6 +218,15 @@ internal sealed record StatusError(string Code, DateTimeOffset At)
     public const string PollFailed = "poll_failed";
 
     public const string PollOutputInvalid = "poll_output_invalid";
+
+    public const string ClaudeNotFound = "claude_not_found";
+
+    public const string ModelUnknown = "model_unknown";
+
+    public const string RunFailed = "run_failed";
+
+    /// <summary>The codes a started run clears.</summary>
+    public static readonly string[] RunCodes = [ClaudeNotFound, ModelUnknown, RunFailed];
 
     /// <summary>The codes a successful poll clears.</summary>
     public static readonly string[] PollCodes = [PythonMissing, PollTimeout, PollFailed, PollOutputInvalid];

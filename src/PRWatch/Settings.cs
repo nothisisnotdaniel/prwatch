@@ -260,9 +260,16 @@ internal static class SettingsRules
     /// version).</summary>
     public static bool IsExecutable(string path)
     {
+        return ResolveExecutable(path) is not null;
+    }
+
+    /// <summary>The full path of the final target of <paramref name="path"/> when <see cref="IsExecutable"/>
+    /// accepts it (the path itself when it is no symlink), else <c>null</c>.</summary>
+    public static string? ResolveExecutable(string path)
+    {
         if (!IsPlainAbsolute(path))
         {
-            return false;
+            return null;
         }
 
         try
@@ -271,19 +278,20 @@ internal static class SettingsRules
             FileSystemInfo? target = file.LinkTarget is null ? file : file.ResolveLinkTarget(returnFinalTarget: true);
             if (target is not FileInfo regular || !regular.Exists || regular.LinkTarget is not null)
             {
-                return false;
+                return null;
             }
 
-            if (OperatingSystem.IsWindows())
+            if (!OperatingSystem.IsWindows()
+                && (File.GetUnixFileMode(regular.FullName) & UnixFileMode.UserExecute) == 0)
             {
-                return true;
+                return null;
             }
 
-            return (File.GetUnixFileMode(regular.FullName) & UnixFileMode.UserExecute) != 0;
+            return regular.FullName;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return false;
+            return null;
         }
     }
 
