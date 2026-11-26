@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace PRWatch.Tests;
@@ -136,6 +137,54 @@ public sealed class ProjectFilesTests
         int build = ci.IndexOf("run: dotnet build -warnaserror", StringComparison.Ordinal);
         int test = ci.IndexOf("run: dotnet test", StringComparison.Ordinal);
         Assert.True(download < check && check < build && build < test);
+    }
+
+    [Fact]
+    public void RoomKitPin_IsOneShasumLine_ForTheCsprojVersion()
+    {
+        string pin = RepoFiles.Read("roomkit.sha256");
+        Match version = Regex.Match(
+            RepoFiles.Read("src/PRWatch/PRWatch.csproj"),
+            @"<PackageReference Include=""RoomKit"" Version=""\[([0-9][0-9.]*)\]""");
+
+        Assert.True(version.Success);
+        Assert.EndsWith("\n", pin, StringComparison.Ordinal);
+        string[] lines = pin[..^1].Split('\n');
+        string line = Assert.Single(lines);
+        Match match = Regex.Match(line, @"^[0-9a-f]{64}  RoomKit\.(?<v>.+)\.nupkg$");
+        Assert.True(match.Success, line);
+        Assert.Equal(version.Groups[1].Value, match.Groups["v"].Value);
+    }
+
+    [Fact]
+    public void Ci_ChecksSumsPinAndAttestation_BeforeTheFeedAndTheBuild()
+    {
+        string ci = RepoFiles.Read(".github/workflows/ci.yml");
+        string[] parts =
+        [
+            "gh release download \"v$version\" --repo nothisisnotdaniel/controlroom",
+            "echo \"RoomKit.$version.nupkg does not match SHA256SUMS.\" >&2",
+            "' roomkit.sha256)",
+            "echo \"RoomKit.$version.nupkg does not match roomkit.sha256.\" >&2",
+            "gh attestation verify \"$download/RoomKit.$version.nupkg\" --repo nothisisnotdaniel/controlroom " +
+                "--signer-workflow nothisisnotdaniel/controlroom/.github/workflows/release.yml " +
+                "--source-ref refs/heads/main --deny-self-hosted-runners",
+            "echo \"RoomKit.$version.nupkg has no valid ControlRoom release attestation.\" >&2",
+            "cp \"$download/RoomKit.$version.nupkg\" \"$feed/\"",
+            "run: dotnet build -warnaserror",
+        ];
+
+        int last = -1;
+        foreach (string part in parts)
+        {
+            int at = ci.IndexOf(part, StringComparison.Ordinal);
+            Assert.True(at > last, part);
+            Assert.Equal(at, ci.LastIndexOf(part, StringComparison.Ordinal));
+            last = at;
+        }
+
+        Assert.Equal(1, Regex.Count(ci, @"gh attestation verify"));
+        Assert.Equal(1, Regex.Count(ci, @"\bcp "));
     }
 
     private static bool IsBuildOutput(string src, string file)

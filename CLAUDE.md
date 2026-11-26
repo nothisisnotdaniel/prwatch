@@ -25,7 +25,9 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   folder, `--TokenFile=<temp>/PRWatch/access-token`, `--environment=Production`, `Host: 127.0.0.1:8101`).
   Before the first build on a Mac, fill the feed once with the `gh release download` command from
   `ControlRoom/docs/roomkit.md` for the version pinned in `src/PRWatch/PRWatch.csproj` (`Version="[x.y.z]"`; CI
-  reads it there and checks the package against the release's `SHA256SUMS`).
+  reads it there and checks the package against the release's `SHA256SUMS`, the pin in `roomkit.sha256` and
+  ControlRoom's build-provenance attestation from `release.yml` on `refs/heads/main`; a RoomKit version bump updates
+  `roomkit.sha256` in the same commit as the csproj).
 - **Access:** as RoomKit gives it: loopback only (`127.0.0.1:8101`), `HostCheck`, the bearer token on every
   `/api/` path (token in `~/Library/Application Support/PRWatch/access-token`), reached from the iPhone through
   `tailscale serve` (`--TailnetHost`). Never listen on `0.0.0.0` or a LAN address.

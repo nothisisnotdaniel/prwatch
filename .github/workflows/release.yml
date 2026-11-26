@@ -151,6 +151,18 @@ jobs:
             echo "RoomKit.$version.nupkg does not match SHA256SUMS." >&2
             exit 1
           fi
+          pinned=""
+          if [ -f roomkit.sha256 ]; then
+            pinned=$(awk -v name="RoomKit.$version.nupkg" 'NR == 1 && NF == 2 && $2 == name { hash = $1 } END { if (NR == 1) print hash }' roomkit.sha256)
+          fi
+          if [ -z "$pinned" ] || [ "$pinned" != "$actual" ]; then
+            echo "RoomKit.$version.nupkg does not match roomkit.sha256." >&2
+            exit 1
+          fi
+          if ! gh attestation verify "$download/RoomKit.$version.nupkg" --repo nothisisnotdaniel/controlroom --signer-workflow nothisisnotdaniel/controlroom/.github/workflows/release.yml --source-ref refs/heads/main --deny-self-hosted-runners; then
+            echo "RoomKit.$version.nupkg has no valid ControlRoom release attestation." >&2
+            exit 1
+          fi
           cp "$download/RoomKit.$version.nupkg" "$feed/"
 
       - name: Build
@@ -199,6 +211,18 @@ jobs:
           actual=$(shasum -a 256 "$download/RoomKit.$version.nupkg" | awk '{ print $1 }')
           if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
             echo "RoomKit.$version.nupkg does not match SHA256SUMS." >&2
+            exit 1
+          fi
+          pinned=""
+          if [ -f roomkit.sha256 ]; then
+            pinned=$(awk -v name="RoomKit.$version.nupkg" 'NR == 1 && NF == 2 && $2 == name { hash = $1 } END { if (NR == 1) print hash }' roomkit.sha256)
+          fi
+          if [ -z "$pinned" ] || [ "$pinned" != "$actual" ]; then
+            echo "RoomKit.$version.nupkg does not match roomkit.sha256." >&2
+            exit 1
+          fi
+          if ! gh attestation verify "$download/RoomKit.$version.nupkg" --repo nothisisnotdaniel/controlroom --signer-workflow nothisisnotdaniel/controlroom/.github/workflows/release.yml --source-ref refs/heads/main --deny-self-hosted-runners; then
+            echo "RoomKit.$version.nupkg has no valid ControlRoom release attestation." >&2
             exit 1
           fi
           cp "$download/RoomKit.$version.nupkg" "$feed/"
