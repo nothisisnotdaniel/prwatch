@@ -244,6 +244,31 @@ public sealed class ProjectFilesTests
     }
 
     [Fact]
+    public void Readme_AddsTheKeychainItemBehindAPrompt()
+    {
+        string text = RepoFiles.Read("README.md");
+
+        Assert.Contains("security add-generic-password -s prwatch-github-packages -a <user> -T '' -w", text, StringComparison.Ordinal);
+        Assert.DoesNotMatch(new Regex(@"add-generic-password[^\n]*-a <user> -w"), text);
+        Assert.All(
+            text.Split('\n').Where(line => line.Contains("add-generic-password", StringComparison.Ordinal)),
+            line => Assert.Contains("-T ''", line, StringComparison.Ordinal));
+        Assert.Contains("\"Allow\", not \"Always Allow\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Readme_TellsHowToReplaceAnOpenItem_AndWarnsAboutTheFile()
+    {
+        string text = RepoFiles.Read("README.md");
+
+        Assert.Contains("security delete-generic-password -s prwatch-github-packages", text, StringComparison.Ordinal);
+        string flat = Regex.Replace(text, @"\s+", " ");
+        Assert.Contains(
+            flat.Split(". "),
+            sentence => sentence.Contains("0600", StringComparison.Ordinal) && sentence.Contains("any code", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void RoomKitPin_IsOneShasumLine_ForTheCsprojVersion()
     {
         string pin = RepoFiles.Read("roomkit.sha256");

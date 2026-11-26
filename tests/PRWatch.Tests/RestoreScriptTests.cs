@@ -51,7 +51,7 @@ public sealed class RestoreScriptTests : IDisposable
             "printf '%s\\n' \"$*\" >> '" + securityLog + "'\n" +
             "[ \"$1 $2 $3\" = \"find-generic-password -s prwatch-github-packages\" ] || exit 2\n" +
             "[ -f '" + keychain + "/user' ] || exit 44\n" +
-            "if [ \"${4:-}\" = \"-w\" ]; then cat '" + keychain + "/token'; exit 0; fi\n" +
+            "if [ \"${4:-}\" = \"-w\" ]; then [ -f '" + keychain + "/deny' ] && exit 51; cat '" + keychain + "/token'; exit 0; fi\n" +
             "printf 'keychain: \"/Users/x/Library/Keychains/login.keychain-db\"\\nclass: \"genp\"\\nattributes:\\n'\n" +
             "printf '    \"acct\"<blob>=\"%s\"\\n' \"$(cat '" + keychain + "/user')\"\n" +
             "printf '    \"svce\"<blob>=\"prwatch-github-packages\"\\n'\n");
@@ -128,7 +128,47 @@ public sealed class RestoreScriptTests : IDisposable
 
         Assert.Equal(1, code);
         Assert.Contains("No GitHub Packages token", stderr, StringComparison.Ordinal);
+        Assert.Contains("security add-generic-password -s prwatch-github-packages -a <user> -T '' -w", stderr, StringComparison.Ordinal);
         Assert.False(File.Exists(dotnetLog));
+    }
+
+    [Fact]
+    public void DeniedKeychainPrompt_FailsWithoutRunningDotnet_AndDoesNotFallBackToTheFile()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        File.WriteAllText(Path.Combine(keychain, "deny"), "");
+        WriteTokenFile(User + ":" + Token + "\n", UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.Equal(1, code);
+        Assert.Contains("The keychain did not hand out the token (prompt denied?).", stderr, StringComparison.Ordinal);
+        Assert.True(!File.Exists(dotnetLog) || File.ReadAllText(dotnetLog).Length == 0);
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Script_ShowsTheAddCommandWithAPrompt_AndWarnsAboutTheFile()
+    {
+        string text = RepoFiles.Read("scripts/restore.sh");
+        string[] lines = text.Split('\n');
+        string[] header = lines.TakeWhile(line => line.StartsWith('#')).ToArray();
+
+        Assert.Contains(header, line => line.Contains("security add-generic-password -s prwatch-github-packages -a <user> -T '' -w", StringComparison.Ordinal));
+        Assert.Contains(
+            lines,
+            line => line.Contains("No GitHub Packages token", StringComparison.Ordinal)
+                && line.Contains("security add-generic-password -s $SERVICE -a <user> -T '' -w", StringComparison.Ordinal));
+        Assert.All(
+            lines.Where(line => line.Contains("add-generic-password", StringComparison.Ordinal)),
+            line => Assert.Contains("-T ''", line, StringComparison.Ordinal));
+        Assert.Contains(header, line => line.Contains("0600 file", StringComparison.Ordinal) && line.Contains("any code", StringComparison.Ordinal));
+        Assert.Contains(header, line => line.Contains("did not hand it out", StringComparison.Ordinal));
     }
 
     [Theory]

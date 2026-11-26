@@ -19,12 +19,19 @@ nuget.org. GitHub Packages needs a sign-in even to read, so set it up once on ea
 2. Store it in your login keychain (the command asks for the token, so it stays out of your shell history):
 
    ```sh
-   security add-generic-password -s prwatch-github-packages -a <user> -w
+   security add-generic-password -s prwatch-github-packages -a <user> -T '' -w
    ```
 
-   `<user>` is your GitHub user name. Or put the single line `<user>:<token>` into
+   `<user>` is your GitHub user name. With `-T ''` no program, not even `/usr/bin/security`, may read the token
+   without asking you, so the keychain asks every time it is read: `scripts/restore.sh` shows a prompt, and you
+   allow it once per run with "Allow", not "Always Allow" (that would let `security` read it silently again). If
+   you stored the item without `-T ''`, delete it with
+   `security delete-generic-password -s prwatch-github-packages` and add it again with the command above.
+
+   Or put the single line `<user>:<token>` into
    `~/Library/Application Support/PRWatch/github-packages` and `chmod 600` it. The token is never committed: don't
-   put it in `nuget.config` or any other file of this repo.
+   put it in `nuget.config` or any other file of this repo. A token in the 0600 file can still be read by any code
+   that runs as you, including `/factory pr` test runs of untrusted PR code, so the keychain is the safer choice.
 3. Run `scripts/restore.sh` once, before `dotnet build` or `dotnet test`, and again after a RoomKit version bump.
    It sets `NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>` for that one `dotnet restore`
    only. After that, build and test take RoomKit from `~/.nuget/packages` and need no token.
