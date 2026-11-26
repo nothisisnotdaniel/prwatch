@@ -46,3 +46,5 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [?] [#39](backlog/039-test-the-factory-pr-filter-with.md) Test the factory PR filter with an empty projects list
 - [?] [#40](backlog/040-skip-the-poll-tree-kill-after.md) Skip the poll tree kill after the process has exited
 - [?] [#41](backlog/041-cover-both-empty-values-for-each.md) Cover both empty values for each name in the runner environment tests
+- [?] [#42](backlog/042-keep-the-login-state-after-an.md) Keep the login state after an error run that had an auth result
+- [?] [#43](backlog/043-wait-for-the-run-timeout-timer.md) Wait for the run timeout timer in the AC-2 runner test
