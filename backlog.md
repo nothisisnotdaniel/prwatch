@@ -36,7 +36,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#27](backlog/027-check-the-tap-area-of-the.md) Check the tap area of the on/off switch on the iPhone
 - [x] [#28](backlog/028-drop-the-unneeded-checkout-in-the.md) Drop the unneeded checkout in the release job → 457-drop-release-checkout.835d19cc90b24dca9a12534f081c7e21
 - [x] [#29](backlog/029-verify-the-release-tarball-independently-of.md) Verify the release tarball independently of the build job's hash → 458-verify-release-hash.2627d768c70142ccbf0f691f91a4bd9f
-- [ ] [#30](backlog/030-tidy-the-publish-output-flag-in.md) Tidy the publish output flag in release.yml
+- [x] [#30](backlog/030-tidy-the-publish-output-flag-in.md) Tidy the publish output flag in release.yml → 460-tidy-publish-output.9c937950ada44a4c8ae7861db388a73b
 - [ ] [#31](backlog/031-keep-a-live-review-s-update.md) Keep a live review's update lock when a second instance starts
 - [ ] [#32](backlog/032-note-why-the-roomkit-feed-tests.md) Note why the RoomKit check tests need bash
 - [x] [#35](backlog/035-put-prwatch-on-tailscale-and-add.md) Put PRWatch on Tailscale and add it to the iPhone home screen (after: #34)
