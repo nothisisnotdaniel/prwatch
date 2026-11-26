@@ -56,7 +56,9 @@ public sealed class ProjectFilesTests
         string[] lines = [.. RepoFiles.Read("src/PRWatch/Program.cs").Split('\n')
             .Where(line => line.Length > 0 && !line.StartsWith("using ", StringComparison.Ordinal))];
 
-        Assert.Equal(["return RoomKitApp.Run(args, PrWatchApp.Options, PrWatchApp.Map);"], lines);
+        Assert.Equal(
+            ["return RoomKitApp.Run(args, PrWatchApp.Options, PrWatchApp.Map, addServices: PrWatchApp.AddServices);"],
+            lines);
     }
 
     [Fact]

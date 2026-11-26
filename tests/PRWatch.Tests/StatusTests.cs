@@ -1,0 +1,193 @@
+using System.Collections.Immutable;
+using System.Net;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace PRWatch.Tests;
+
+/// <summary><c>GET /api/status</c> and <c>status.json</c>: the initial state, updates through
+/// <see cref="StatusStore"/>, concurrent updates, symlinks and loading at start.</summary>
+public sealed class StatusTests
+{
+    private const string Route = "/api/status";
+
+    private const string Initial =
+        "{\"lastPoll\":null,\"runs\":{},\"brake\":{\"holding\":false,\"reason\":null,\"until\":null},"
+        + "\"login\":{\"state\":\"unknown\",\"credentialExpiresAt\":null},\"lastError\":null}";
+
+    [Fact]
+    public async Task Get_OnAFreshHost_IsTheInitialStatus()
+    {
+        using PrWatchFactory factory = new();
+        using HttpClient client = await Start(factory);
+
+        using HttpResponseMessage response = await client.GetAsync(Route);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(Initial, await response.Content.ReadAsStringAsync());
+        Assert.False(File.Exists(StatusFile(factory)));
+    }
+
+    [Fact]
+    public async Task Update_ShowsInTheRoute_WithUtcTimesFromTheClock()
+    {
+        using PrWatchFactory factory = new();
+        using HttpClient client = await Start(factory);
+        StatusStore store = factory.Services.GetRequiredService<StatusStore>();
+        DateTimeOffset now = factory.Clock.GetUtcNow();
+
+        store.Update(status => status with
+        {
+            LastPoll = now,
+            Runs = status.Runs.SetItem("Alpha-12", new RunStatus
+            {
+                HeadSha = "abc123",
+                StartedAt = now.AddMinutes(-3).ToOffset(TimeSpan.FromHours(2)),
+                EndedAt = now,
+                ExitCode = 0,
+                Result = "clean",
+            }),
+            Brake = new BrakeStatus { Holding = true, Reason = "runs_per_hour", Until = now.AddHours(1) },
+            Login = new LoginStatus { State = LoginStatus.Ok, CredentialExpiresAt = now.AddDays(30) },
+        });
+        string body = await client.GetStringAsync(Route);
+
+        Assert.Equal(
+            "{\"lastPoll\":\"2026-11-26T10:00:00.000Z\",\"runs\":{\"Alpha-12\":{\"headSha\":\"abc123\","
+            + "\"startedAt\":\"2026-11-26T09:57:00.000Z\",\"endedAt\":\"2026-11-26T10:00:00.000Z\",\"exitCode\":0,"
+            + "\"result\":\"clean\"}},\"brake\":{\"holding\":true,\"reason\":\"runs_per_hour\","
+            + "\"until\":\"2026-11-26T11:00:00.000Z\"},\"login\":{\"state\":\"ok\","
+            + "\"credentialExpiresAt\":\"2026-12-26T10:00:00.000Z\"},\"lastError\":null}",
+            body);
+        using JsonDocument file = JsonDocument.Parse(File.ReadAllBytes(StatusFile(factory)));
+        Assert.Equal("2026-11-26T10:00:00.000Z", file.RootElement.GetProperty("lastPoll").GetString());
+    }
+
+    [Fact]
+    public async Task FiftyParallelUpdates_LoseNothing_InMemoryOrInTheFile()
+    {
+        using PrWatchFactory factory = new();
+        using HttpClient client = await Start(factory);
+        StatusStore store = factory.Services.GetRequiredService<StatusStore>();
+
+        Task[] updates = [.. Enumerable.Range(1, 50).Select(number => Task.Run(() => store.Update(status => status with
+        {
+            Runs = status.Runs.SetItem("Alpha-" + number, new RunStatus { ExitCode = number }),
+        })))];
+        await Task.WhenAll(updates);
+
+        Assert.Equal(50, store.Current.Runs.Count);
+        using JsonDocument file = JsonDocument.Parse(File.ReadAllBytes(StatusFile(factory)));
+        Assert.Equal(50, file.RootElement.GetProperty("runs").EnumerateObject().Count());
+        using JsonDocument route = JsonDocument.Parse(await client.GetStringAsync(Route));
+        Assert.Equal(50, route.RootElement.GetProperty("runs").EnumerateObject().Count());
+        Assert.Equal(JsonValueKind.Null, route.RootElement.GetProperty("lastError").ValueKind);
+        Assert.Empty(Directory.EnumerateFiles(factory.DataFolder, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task SymlinkedStatusFile_IsNotWrittenThrough_AndTheStatusKeepsWorkingInMemory()
+    {
+        using PrWatchFactory factory = new();
+        string outside = Path.Combine(factory.TempFolder, "outside.json");
+        File.WriteAllText(outside, "keep me\n");
+        byte[] before = File.ReadAllBytes(outside);
+        File.CreateSymbolicLink(Path.Combine(factory.CreateDataFolder(), "status.json"), outside);
+        using HttpClient client = await Start(factory);
+        StatusStore store = factory.Services.GetRequiredService<StatusStore>();
+
+        store.Update(status => status with { LastPoll = factory.Clock.GetUtcNow() });
+        using JsonDocument body = JsonDocument.Parse(await client.GetStringAsync(Route));
+
+        Assert.Equal(before, File.ReadAllBytes(outside));
+        Assert.Equal("2026-11-26T10:00:00.000Z", body.RootElement.GetProperty("lastPoll").GetString());
+        JsonElement error = body.RootElement.GetProperty("lastError");
+        Assert.Equal("status_write_failed", error.GetProperty("code").GetString());
+        Assert.Equal("2026-11-26T10:00:00.000Z", error.GetProperty("at").GetString());
+    }
+
+    [Fact]
+    public async Task ExistingValidFile_IsLoadedAtStart()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-status-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using (PrWatchFactory first = new(folder, ownsFolder: false))
+            {
+                using HttpClient client = await Start(first);
+                first.Services.GetRequiredService<StatusStore>().Update(status => status with
+                {
+                    LastPoll = first.Clock.GetUtcNow(),
+                    Runs = status.Runs.SetItem("factory-7", new RunStatus { HeadSha = "def", ExitCode = 1 }),
+                });
+            }
+
+            using PrWatchFactory second = new(folder, ownsFolder: false);
+            using HttpClient again = await Start(second);
+            using JsonDocument body = JsonDocument.Parse(await again.GetStringAsync(Route));
+
+            Assert.Equal("2026-11-26T10:00:00.000Z", body.RootElement.GetProperty("lastPoll").GetString());
+            JsonElement run = body.RootElement.GetProperty("runs").GetProperty("factory-7");
+            Assert.Equal("def", run.GetProperty("headSha").GetString());
+            Assert.Equal(1, run.GetProperty("exitCode").GetInt32());
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("{not json")]
+    [InlineData("{\"login\":{\"state\":\"maybe\"}}")]
+    [InlineData("{\"surprise\":1}")]
+    public async Task InvalidFile_IsIgnoredAtStart(string content)
+    {
+        using PrWatchFactory factory = new();
+        File.WriteAllText(Path.Combine(factory.CreateDataFolder(), "status.json"), content);
+        using HttpClient client = await Start(factory);
+
+        Assert.Equal(Initial, await client.GetStringAsync(Route));
+    }
+
+    [Fact]
+    public void Store_KeepsRunKeysInOrdinalOrder()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-status-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            StatusStore store = new(folder, new FakeClock(FakeClock.DefaultNow));
+            foreach (string key in new[] { "beta-1", "Alpha-2", "alpha-10" })
+            {
+                store.Update(status => status with { Runs = status.Runs.SetItem(key, new RunStatus()) });
+            }
+
+            StatusStore reloaded = new(folder, new FakeClock(FakeClock.DefaultNow));
+
+            ImmutableArray<string> expected = ["Alpha-2", "alpha-10", "beta-1"];
+            Assert.Equal(expected, store.Current.Runs.Keys);
+            Assert.Equal(expected, reloaded.Current.Runs.Keys);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static async Task<HttpClient> Start(PrWatchFactory factory)
+    {
+        using (HttpClient anonymous = factory.CreateClient())
+        {
+            using HttpResponseMessage health = await anonymous.GetAsync("/health");
+            Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        }
+
+        return factory.CreateTokenClient();
+    }
+
+    private static string StatusFile(PrWatchFactory factory)
+    {
+        return Path.Combine(factory.DataFolder, "status.json");
+    }
+}
