@@ -148,6 +148,7 @@ internal static class PrWatchApp
             return RequestError(context, "write_failed", StatusCodes.Status500InternalServerError);
         }
 
+        watcher.NoteRequest(request);
         status.Update(previous => previous with
         {
             Prs = [.. previous.Prs.Select(item =>
