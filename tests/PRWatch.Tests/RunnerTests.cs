@@ -239,6 +239,31 @@ public sealed class RunnerTests
         Assert.False(rig.Watch.Status.Current.Runs.ContainsKey("Alpha-2"));
     }
 
+    // --- job 449: the run records the request it was handed ---------------------------------------
+
+    [Theory]
+    [InlineData("merge")]
+    [InlineData("review")]
+    [InlineData("cancel")]
+    [InlineData(null)]
+    public async Task Start_RecordsThePicksRequest_InTheRunsEntry(string? request)
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, Result());
+
+        Assert.True(rig.Runner.TryStart(Alpha1 with { Request = request }));
+
+        Assert.Equal(request, rig.Watch.Status.Current.Runs["Alpha-1"].Request);
+        await WatcherRig.WaitFor(
+            () => Task.FromResult(rig.Watch.Status.Current.Runs["Alpha-1"].EndedAt is not null), "the run's end");
+        await WatcherRig.WaitFor(() => Task.FromResult(!rig.Runner.IsBusy), "IsBusy is false");
+        RunStatus ended = rig.Watch.Status.Current.Runs["Alpha-1"];
+        Assert.Equal(request, ended.Request);
+        using JsonDocument file = JsonDocument.Parse(File.ReadAllBytes(rig.Watch.Status.Path));
+        JsonElement stored = file.RootElement.GetProperty("runs").GetProperty("Alpha-1").GetProperty("request");
+        Assert.Equal(request, stored.ValueKind == JsonValueKind.Null ? null : stored.GetString());
+    }
+
     [Theory]
     [InlineData("disabled", 1)]
     [InlineData("Gamma", 1)]

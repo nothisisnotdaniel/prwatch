@@ -103,20 +103,21 @@ internal static class PrWatchApp
                 PrWatchJson.Options), StatusCodes.Status200OK));
         routes.App.MapGet(PrsRoute, (HttpContext context, SettingsStore settings, StatusStore status) =>
             Json(context, PrsView(status.Current, settings.Current).ToJsonString(), StatusCodes.Status200OK));
-        routes.MapPost(ReviewRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
-            SubmitRequest(context, RequestWriter.Review, settings, status, watcher));
-        routes.MapPost(MergeRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
-            SubmitRequest(context, RequestWriter.Merge, settings, status, watcher));
-        routes.MapPost(CancelRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
-            SubmitRequest(context, RequestWriter.Cancel, settings, status, watcher));
+        routes.MapPost(ReviewRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher,
+            TimeProvider time) => SubmitRequest(context, RequestWriter.Review, settings, status, watcher, time));
+        routes.MapPost(MergeRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher,
+            TimeProvider time) => SubmitRequest(context, RequestWriter.Merge, settings, status, watcher, time));
+        routes.MapPost(CancelRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher,
+            TimeProvider time) => SubmitRequest(context, RequestWriter.Cancel, settings, status, watcher, time));
     }
 
     /// <summary>Checks the body (<c>400 invalid_request</c>, also without a valid factory root), finds the PR in
     /// the last poll (<c>404 unknown_pr</c>) with the head the user saw (<c>409 stale_request</c>), writes the
-    /// request file (<c>500 write_failed</c>), sets the PR's <c>request</c> in the status and, while
+    /// request file (<c>500 write_failed</c>), sets the PR's <c>request</c> and its tap (<c>taps</c>, at the
+    /// clock's time) in the status and, while
     /// <c>enabled</c> is on, has the watcher poll at once. Only fixed texts go into the response.</summary>
     private static async Task<IResult> SubmitRequest(HttpContext context, string action, SettingsStore settings,
-        StatusStore status, Watcher watcher)
+        StatusStore status, Watcher watcher, TimeProvider time)
     {
         byte[]? body = await ReadCapped(context.Request, RequestWriter.MaxBodyBytes);
         string? root = settings.Current.FactoryRoot;
@@ -149,12 +150,16 @@ internal static class PrWatchApp
         }
 
         watcher.NoteRequest(request);
+        DateTimeOffset tappedAt = time.GetUtcNow();
         status.Update(previous => previous with
         {
             Prs = [.. previous.Prs.Select(item =>
                 item.Project == request.Project && item.Number == request.Number && item.HeadSha == request.HeadSha
-                    ? item with { Request = request.Action }
+                    ? item with { Request = request.Action, RequestUnused = false }
                     : item)],
+            Taps = previous.Taps.SetItem(
+                PrRules.RunKey(request.Project, request.Number),
+                new TapStatus { Action = request.Action, HeadSha = request.HeadSha, At = tappedAt }),
         });
         if (settings.Current.Enabled)
         {
@@ -196,6 +201,7 @@ internal static class PrWatchApp
                 ["headSha"] = pr.HeadSha,
                 ["stage"] = pr.Stage,
                 ["request"] = pr.Request,
+                ["requestUnused"] = pr.RequestUnused,
                 ["round"] = pr.Round is { } round
                     ? new JsonObject
                     {

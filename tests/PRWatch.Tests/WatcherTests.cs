@@ -656,6 +656,315 @@ public sealed class WatcherTests
         }
     }
 
+    // --- job 449: each tap starts at most one run ---------------------------------------------------
+
+    // state: what the runs and taps say about the PR's "review" request; condition: why the ordinary rules alone
+    // would not pick it ("plain": trusted, auto-review on, no current round).
+    [Theory]
+    [InlineData("no-run", "plain", true)]
+    [InlineData("no-run", "round-current", true)]
+    [InlineData("no-run", "untrusted", true)]
+    [InlineData("no-run", "auto-review-off", true)]
+    [InlineData("run-without-request", "plain", true)]
+    [InlineData("run-without-request", "round-current", true)]
+    [InlineData("run-without-request", "untrusted", true)]
+    [InlineData("run-without-request", "auto-review-off", true)]
+    [InlineData("run-for-another-head", "plain", true)]
+    [InlineData("run-for-another-head", "round-current", true)]
+    [InlineData("run-for-another-head", "untrusted", true)]
+    [InlineData("run-for-another-head", "auto-review-off", true)]
+    [InlineData("tap-after-run", "plain", true)]
+    [InlineData("tap-after-run", "round-current", true)]
+    [InlineData("tap-after-run", "untrusted", true)]
+    [InlineData("tap-after-run", "auto-review-off", true)]
+    [InlineData("used-no-tap", "plain", false)]
+    [InlineData("used-no-tap", "round-current", false)]
+    [InlineData("used-no-tap", "untrusted", false)]
+    [InlineData("used-no-tap", "auto-review-off", false)]
+    [InlineData("used-tap-at-start", "plain", false)]
+    [InlineData("used-tap-at-start", "round-current", false)]
+    [InlineData("used-tap-at-start", "untrusted", false)]
+    [InlineData("used-tap-at-start", "auto-review-off", false)]
+    [InlineData("used-tap-before-run", "plain", false)]
+    [InlineData("used-tap-before-run", "round-current", false)]
+    [InlineData("used-tap-before-run", "untrusted", false)]
+    [InlineData("used-tap-before-run", "auto-review-off", false)]
+    [InlineData("tap-for-another-head-no-run", "plain", false)]
+    [InlineData("tap-for-another-head-no-run", "untrusted", false)]
+    [InlineData("tap-for-another-head-run-there", "plain", false)]
+    [InlineData("tap-for-another-head-run-there", "untrusted", false)]
+    [InlineData("tap-for-another-head-run-there", "round-current", false)]
+    [InlineData("tap-for-another-head-run-there", "auto-review-off", false)]
+    [InlineData("no-tap-run-for-another-head", "untrusted", false)]
+    [InlineData("no-tap-run-for-another-head", "round-current", false)]
+    public void Choose_AUsedRequest_SkipsNoRule_AnUnusedOneStillBypassesThem(
+        string state, string condition, bool picked)
+    {
+        DateTimeOffset now = FakeClock.DefaultNow;
+        DateTimeOffset started = now.AddMinutes(-5);
+        PrStatus pr = new()
+        {
+            Project = "Alpha",
+            Number = 4,
+            Title = "t",
+            Author = "a",
+            HeadSha = Sha,
+            HeadSeenAt = now.AddMinutes(-30),
+            Trusted = condition != "untrusted",
+            Request = "review",
+            Round = condition == "round-current"
+                ? new RoundStatus { K = 1, HeadSha = Sha, Current = true, Clean = true }
+                : null,
+        };
+        RunStatus? run = state switch
+        {
+            "no-run" or "tap-for-another-head-no-run" => null,
+            "tap-for-another-head-run-there" or "no-tap-run-for-another-head" =>
+                new RunStatus { HeadSha = WatcherRig.ShaB, StartedAt = started, EndedAt = started, Request = "review" },
+            "run-without-request" => new RunStatus { HeadSha = Sha, StartedAt = started, EndedAt = started },
+            "run-for-another-head" => new RunStatus { HeadSha = WatcherRig.ShaB, StartedAt = started, Request = "review" },
+            _ => new RunStatus { HeadSha = Sha, StartedAt = started, EndedAt = started, Request = "review" },
+        };
+        DateTimeOffset? tapped = state switch
+        {
+            "tap-after-run" => started.AddSeconds(1),
+            "used-tap-at-start" => started,
+            "used-tap-before-run" => started.AddSeconds(-1),
+            "used-no-tap" or "no-tap-run-for-another-head" => null,
+            _ => started.AddMinutes(-1),
+        };
+        string tappedHead = state.StartsWith("tap-for-another-head", StringComparison.Ordinal) ? WatcherRig.ShaB : Sha;
+        Status status = new()
+        {
+            Prs = [pr],
+            Runs = run is null ? Status.Initial.Runs : Status.Initial.Runs.SetItem("Alpha-4", run),
+            Taps = tapped is { } at
+                ? Status.Initial.Taps.SetItem("Alpha-4", new TapStatus { Action = "review", HeadSha = tappedHead, At = at })
+                : Status.Initial.Taps,
+        };
+        Settings settings = new() { QuietMinutes = 10, AutoReviewTrusted = condition != "auto-review-off" };
+
+        ReviewPick? pick = Watcher.Choose(status, settings, new HashSet<string>(), now);
+
+        Assert.Equal(!picked, Watcher.IsRequestUsed(status, pr));
+        if (picked)
+        {
+            Assert.Equal(new ReviewPick("Alpha", 4, Sha, condition != "untrusted", "review"), pick);
+        }
+        else
+        {
+            // Judged as if it had no request: the same result as the PR without one.
+            ReviewPick? plain = Watcher.Choose(status with { Prs = [pr with { Request = null }] }, settings,
+                new HashSet<string>(), now);
+            Assert.Equal(plain, pick);
+            bool ordinary = condition == "plain" && (run is null || run.HeadSha != Sha);
+            Assert.Equal(ordinary, pick is not null);
+            Assert.Null(pick?.Request);
+        }
+    }
+
+    [Fact]
+    public void Choose_AUsedRequest_OnAPrTheOrdinaryRulesPick_HandsOnNoRequest()
+    {
+        // A used request always has a same-head run, which the ordinary rules skip, so a used request is never
+        // picked. Without that run (another PR state) the ordinary pick carries no request at all.
+        DateTimeOffset now = FakeClock.DefaultNow;
+        PrStatus pr = new()
+        {
+            Project = "Alpha",
+            Number = 4,
+            Title = "t",
+            Author = "a",
+            HeadSha = Sha,
+            HeadSeenAt = now.AddMinutes(-30),
+            Trusted = true,
+        };
+        Status status = new()
+        {
+            Prs = [pr],
+            Runs = Status.Initial.Runs.SetItem("Alpha-4",
+                new RunStatus { HeadSha = WatcherRig.ShaB, StartedAt = now.AddMinutes(-5), Request = "review" }),
+        };
+        Settings settings = new() { QuietMinutes = 10, AutoReviewTrusted = true };
+
+        ReviewPick? pick = Watcher.Choose(status, settings, new HashSet<string>(), now);
+
+        Assert.Equal(new ReviewPick("Alpha", 4, Sha, true, null), pick);
+    }
+
+    [Fact]
+    public async Task Poll_ALeftoverRequestFile_StartsOneRunPerTap()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1, trusted: false, request: "review")]);
+        Tap(rig, "Alpha", 1, "review");
+
+        await rig.Poll();
+
+        ReviewPick first = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(new ReviewPick("Alpha", 1, Sha, false, "review"), first);
+        Assert.Equal("review", rig.Status.Current.Runs["Alpha-1"].Request);
+        EndRun(rig, "Alpha-1");
+        for (int poll = 0; poll < 3; poll++)
+        {
+            rig.Clock.Advance(TimeSpan.FromMinutes(rig.Settings.Current.PollMinutes + 1));
+            await rig.Poll();
+
+            Assert.Single(rig.Runner.Calls);
+            Assert.Null(rig.Status.Current.Pick);
+            PrStatus pr = Assert.Single(rig.Status.Current.Prs);
+            Assert.Equal("review", pr.Request);
+            Assert.True(pr.RequestUnused);
+        }
+
+        rig.Clock.Advance(TimeSpan.FromMinutes(1));
+        Tap(rig, "Alpha", 1, "review");
+        Assert.False(Assert.Single(rig.Status.Current.Prs).RequestUnused);
+        rig.Clock.Advance(TimeSpan.FromMinutes(rig.Settings.Current.PollMinutes + 1));
+        await rig.Poll();
+
+        Assert.Equal(2, rig.Runner.Calls.Count);
+        Assert.Equal(first, rig.Runner.Calls[1]);
+        Assert.False(Assert.Single(rig.Status.Current.Prs).RequestUnused);
+        EndRun(rig, "Alpha-1");
+        rig.Clock.Advance(TimeSpan.FromMinutes(rig.Settings.Current.PollMinutes + 1));
+        await rig.Poll();
+
+        Assert.Equal(2, rig.Runner.Calls.Count);
+        Assert.True(Assert.Single(rig.Status.Current.Prs).RequestUnused);
+    }
+
+    [Fact]
+    public async Task Poll_ALeftoverRequestFile_StartsNoRunForANewHead_UntilTheUserTapsIt()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1, trusted: false, request: "review")]);
+        Tap(rig, "Alpha", 1, "review");
+        await rig.Poll();
+        Assert.Single(rig.Runner.Calls);
+        EndRun(rig, "Alpha-1");
+
+        // The author pushes; job.py still prints the leftover file's request for the new head.
+        rig.Output([WatcherRig.Pr("Alpha", 1, head: WatcherRig.ShaB, trusted: false, request: "review")]);
+        for (int poll = 0; poll < 3; poll++)
+        {
+            rig.Clock.Advance(TimeSpan.FromMinutes(rig.Settings.Current.PollMinutes + 1));
+            await rig.Poll();
+
+            Assert.Single(rig.Runner.Calls);
+            Assert.True(Assert.Single(rig.Status.Current.Prs).RequestUnused);
+        }
+
+        rig.Clock.Advance(TimeSpan.FromMinutes(1));
+        Tap(rig, "Alpha", 1, "review", WatcherRig.ShaB);
+        rig.Clock.Advance(TimeSpan.FromMinutes(rig.Settings.Current.PollMinutes + 1));
+        await rig.Poll();
+
+        Assert.Equal(2, rig.Runner.Calls.Count);
+        Assert.Equal(new ReviewPick("Alpha", 1, WatcherRig.ShaB, false, "review"), rig.Runner.Calls[1]);
+    }
+
+    [Fact]
+    public async Task Poll_DropsTheTapsOfClosedPrs_ButKeepsThoseOfASkippedProject()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1)],
+            [new JsonObject { ["project"] = "Beta", ["reason"] = "gh pr list failed: x" }]);
+        rig.Runner.Result = false;
+        DateTimeOffset at = rig.Clock.GetUtcNow();
+        rig.Status.Update(status => status with
+        {
+            Taps = status.Taps
+                .SetItem("Alpha-1", new TapStatus { Action = "review", HeadSha = Sha, At = at })
+                .SetItem("Alpha-2", new TapStatus { Action = "merge", HeadSha = Sha, At = at })
+                .SetItem("Beta-3", new TapStatus { Action = "cancel", HeadSha = Sha, At = at }),
+        });
+
+        await rig.Poll();
+
+        Assert.Equal(["Alpha-1", "Beta-3"], rig.Status.Current.Taps.Keys);
+    }
+
+    [Fact]
+    public async Task Poll_AnUnusedRequest_ShowsRequestUnusedFalse_AndAPrWithoutARequestToo()
+    {
+        using WatcherRig rig = new();
+        rig.Output([
+            WatcherRig.Pr("Alpha", 1, trusted: false, request: "merge"),
+            WatcherRig.Pr("Alpha", 2, trusted: false),
+        ]);
+        rig.Runner.Result = false;
+
+        await rig.Poll();
+
+        Assert.Equal([false, false], rig.Status.Current.Prs.Select(pr => pr.RequestUnused));
+    }
+
+    [Fact]
+    public async Task Poll_AfterARestart_KeepsTheUsedRule_FromTheStoredRunAndTap()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1, trusted: false, request: "review")]);
+        Tap(rig, "Alpha", 1, "review");
+        await rig.Poll();
+        Assert.Single(rig.Runner.Calls);
+        EndRun(rig, "Alpha-1");
+
+        rig.Open();
+        Assert.Equal("review", rig.Status.Current.Runs["Alpha-1"].Request);
+        Assert.Single(rig.Status.Current.Taps);
+        rig.Clock.Advance(TimeSpan.FromMinutes(rig.Settings.Current.PollMinutes + 1));
+        await rig.Poll();
+
+        Assert.Single(rig.Runner.Calls);
+        Assert.True(Assert.Single(rig.Status.Current.Prs).RequestUnused);
+    }
+
+    [Fact]
+    public async Task Poll_DropsTheTapsOfProjectsThatAreNotDiscovered()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1)]);
+        rig.Runner.Result = false;
+        rig.Status.Update(status => status with
+        {
+            Taps = status.Taps
+                .SetItem("Alpha-1", new TapStatus { Action = "review", HeadSha = Sha, At = rig.Clock.GetUtcNow() })
+                .SetItem("Gone-1", new TapStatus { Action = "merge", HeadSha = Sha, At = rig.Clock.GetUtcNow() }),
+        });
+
+        await rig.Poll();
+
+        Assert.Equal(["Alpha-1"], rig.Status.Current.Taps.Keys);
+    }
+
+    /// <summary>What a successful <c>POST /api/prs/&lt;action&gt;</c> stores: the noted request, the PR's
+    /// request and the tap at the clock's time.</summary>
+    private static void Tap(WatcherRig rig, string project, int number, string action, string head = Sha)
+    {
+        rig.Watcher.NoteRequest(new PrRequest(action, project, number, head, false));
+        DateTimeOffset at = rig.Clock.GetUtcNow();
+        rig.Status.Update(status => status with
+        {
+            Prs = [.. status.Prs.Select(pr => pr.Project == project && pr.Number == number && pr.HeadSha == head
+                ? pr with { Request = action, RequestUnused = false }
+                : pr)],
+            Taps = status.Taps.SetItem(PrRules.RunKey(project, number),
+                new TapStatus { Action = action, HeadSha = head, At = at }),
+        });
+    }
+
+    /// <summary>Ends the fake run as the real runner does: its status write sets <c>endedAt</c>.</summary>
+    private static void EndRun(WatcherRig rig, string key)
+    {
+        DateTimeOffset at = rig.Clock.GetUtcNow();
+        rig.Status.Update(status => status with
+        {
+            Runs = status.Runs.SetItem(key, status.Runs[key] with { EndedAt = at, ExitCode = 1, Result = RunStatus.Error }),
+        });
+        Assert.False(rig.Runner.IsBusy);
+    }
+
     [Fact]
     public async Task PollSoon_WakesTheLoopForOnePoll()
     {

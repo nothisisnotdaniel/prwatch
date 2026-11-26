@@ -2,7 +2,7 @@ namespace PRWatch.Tests;
 
 /// <summary>A review runner for tests: <see cref="IsBusy"/> and the <see cref="TryStart"/> result are set by the
 /// test, and every call is recorded. Like the real runner, a true result writes the run's <c>headSha</c> and
-/// <c>startedAt</c> to <see cref="Status"/> (when set) at <see cref="Clock"/>'s time. It never starts a
+/// <c>startedAt</c> and <c>request</c> to <see cref="Status"/> (when set) at <see cref="Clock"/>'s time. It never starts a
 /// process.</summary>
 internal sealed class FakeReviewRunner : IReviewRunner
 {
@@ -42,7 +42,12 @@ internal sealed class FakeReviewRunner : IReviewRunner
             Status.Update(previous => previous with
             {
                 Runs = previous.Runs.SetItem(
-                    PrRules.RunKey(pick.Project, pick.Number), new RunStatus { HeadSha = pick.HeadSha, StartedAt = now }),
+                    PrRules.RunKey(pick.Project, pick.Number), new RunStatus
+                    {
+                        HeadSha = pick.HeadSha,
+                        StartedAt = now,
+                        Request = pick.Request,
+                    }),
             });
         }
 

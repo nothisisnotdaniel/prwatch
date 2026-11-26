@@ -149,6 +149,7 @@ public sealed class RequestTests
 
         await AssertError(response, HttpStatusCode.BadRequest, "invalid_request");
         Assert.False(Directory.Exists(Path.Combine(rig.Root, "factory", "prs")));
+        Assert.Empty(rig.Status.Current.Taps);
     }
 
     [Theory]
@@ -162,6 +163,7 @@ public sealed class RequestTests
 
         await AssertError(response, HttpStatusCode.BadRequest, "invalid_request");
         Assert.False(Directory.Exists(Path.Combine(rig.Root, "factory", "prs")));
+        Assert.Empty(rig.Status.Current.Taps);
     }
 
     // --- AC-3: unknown and stale -----------------------------------------------------------------
@@ -183,6 +185,7 @@ public sealed class RequestTests
 
         await AssertError(response, code, error);
         Assert.False(Directory.Exists(Path.Combine(rig.Root, "factory", "prs")));
+        Assert.Empty(rig.Status.Current.Taps);
         Assert.Null(Assert.Single(rig.Status.Current.Prs).Request);
     }
 
@@ -297,6 +300,7 @@ public sealed class RequestTests
 
             await AssertError(response, HttpStatusCode.InternalServerError, "write_failed");
             Assert.Empty(Directory.GetFileSystemEntries(folder));
+            Assert.Empty(rig.Status.Current.Taps);
         }
         finally
         {
@@ -530,6 +534,43 @@ public sealed class RequestTests
         Assert.Equal(action, prs[0].GetProperty("request").GetString());
         Assert.Equal(JsonValueKind.Null, prs[1].GetProperty("request").ValueKind);
         Assert.False(File.Exists(rig.CallsFile));
+    }
+
+    // --- job 449: one run per tap -----------------------------------------------------------------
+
+    [Theory]
+    [MemberData(nameof(Actions))]
+    public async Task Success_StoresTheTap_WithTheClocksTime_AndTheLatestTapWins(string action)
+    {
+        using Rig rig = await Rig.Start();
+        rig.SeedPr("Alpha", 1, Sha);
+        rig.SeedPr("Alpha", 2, Sha);
+        rig.Factory.Clock.Advance(TimeSpan.FromMinutes(3));
+        DateTimeOffset first = rig.Factory.Clock.GetUtcNow();
+
+        using (HttpResponseMessage response = await rig.Post("review", Body("review", "Alpha", 1, Sha, false)))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        Assert.Equal(new TapStatus { Action = "review", HeadSha = Sha, At = first },
+            Assert.Single(rig.Status.Current.Taps, tap => tap.Key == "Alpha-1").Value);
+        rig.Factory.Clock.Advance(TimeSpan.FromSeconds(30));
+        DateTimeOffset second = rig.Factory.Clock.GetUtcNow();
+
+        using (HttpResponseMessage response = await rig.Post(action, Body(action, "Alpha", 1, Sha, true)))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        KeyValuePair<string, TapStatus> tap = Assert.Single(rig.Status.Current.Taps);
+        Assert.Equal("Alpha-1", tap.Key);
+        Assert.Equal(new TapStatus { Action = action, HeadSha = Sha, At = second }, tap.Value);
+        using JsonDocument status = JsonDocument.Parse(await rig.Client.GetStringAsync("/api/status"));
+        JsonElement stored = status.RootElement.GetProperty("taps").GetProperty("Alpha-1");
+        Assert.Equal(action, stored.GetProperty("action").GetString());
+        Assert.Equal(Sha, stored.GetProperty("headSha").GetString());
+        Assert.Equal(second, stored.GetProperty("at").GetDateTimeOffset());
     }
 
     [Fact]

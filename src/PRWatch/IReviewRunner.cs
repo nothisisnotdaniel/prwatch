@@ -1,7 +1,7 @@
 namespace PRWatch;
 
 /// <summary>The PR the watcher hands to the runner: its checked project and number, the head it saw, whether its
-/// author is trusted and its pending request (<c>null</c> or <c>review</c>).</summary>
+/// author is trusted and its pending request (<c>null</c> or one of <see cref="PrRules.Requests"/>, recorded as the run's <c>request</c>).</summary>
 internal sealed record ReviewPick(string Project, int Number, string HeadSha, bool Trusted, string? Request);
 
 /// <summary>Starts one review run at a time (<see cref="ClaudeReviewRunner"/> in production). A runner that
