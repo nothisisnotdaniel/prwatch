@@ -14,6 +14,9 @@ const CancelRoute = "/api/prs/cancel";
 // Status and PRs reload this often while the page is visible.
 const RefreshSeconds = 30;
 
+// An armed Consent or Merge button stays armed this long after the first tap; a refresh does not reset it.
+const ArmSeconds = 5;
+
 const PullUrl = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+$/;
 const Sha = /^[0-9a-f]{40}$/;
 const MaxTitle = 200;
@@ -180,6 +183,11 @@ const CheckFields = ["autoReviewTrusted", "autoMergeTrusted"];
 const TextFields = ["factoryRoot", "claudePath"];
 
 let refreshTimer = null;
+// The one armed Consent or Merge button: { project, number, action, headSha, until }, its button as last drawn,
+// and the timer that disarms it.
+let armed = null;
+let armedButton = null;
+let armTimer = null;
 let loadedSettings = null;
 
 // A fixed text from map for code, else fallback; never the code itself.
@@ -371,19 +379,75 @@ async function tap(action, pr) {
   await refresh();
 }
 
+function actionLabel(action) {
+  return action === "consent" ? Texts.consent : action === "merge" ? Texts.merge : Texts.cancel;
+}
+
+function armedForPr(action, pr) {
+  return armed !== null && armed.project === pr.project && armed.number === pr.number && armed.action === action;
+}
+
+function armedFor(action, pr) {
+  return armedForPr(action, pr) && armed.headSha === pr.headSha && Date.now() < armed.until;
+}
+
+// Ends the armed window: clears the state and the timer, and redraws the button unarmed if it is still shown.
+function disarm() {
+  if (armTimer !== null) {
+    clearTimeout(armTimer);
+    armTimer = null;
+  }
+  if (armed !== null && armedButton !== null && armedButton.isConnected) {
+    const label = actionLabel(armed.action);
+    const head = shortSha(armed.headSha);
+    armedButton.classList.remove("armed");
+    delete armedButton.dataset.armed;
+    armedButton.textContent = label + " · " + head;
+  }
+  armed = null;
+  armedButton = null;
+}
+
 function actionButton(action, pr) {
   const head = shortSha(pr.headSha);
-  const label = action === "consent" ? Texts.consent : action === "merge" ? Texts.merge : Texts.cancel;
+  const label = actionLabel(action);
   const button = element("button", "action action-" + action, label + " · " + head);
   button.type = "button";
   const confirm = action === "consent" ? Texts.confirmConsent : action === "merge" ? Texts.confirmMerge : "";
+  if (confirm && armedFor(action, pr)) {
+    // A refresh inside the armed window draws the button armed again.
+    button.dataset.armed = "yes";
+    button.classList.add("armed");
+    button.textContent = confirm + head;
+    armedButton = button;
+  } else if (confirm && armedForPr(action, pr)) {
+    // A new head (or an ended window): the armed state never carries over.
+    disarm();
+  }
   button.addEventListener("click", () => {
-    // Consent and Merge need a second tap that names the head.
-    if (confirm && button.dataset.armed !== "yes") {
+    // Cancel sends on one tap.
+    if (confirm === "") {
+      button.disabled = true;
+      tap(action, pr);
+      return;
+    }
+    // Consent and Merge need a second tap that names the head, within ArmSeconds of the first.
+    if (!armedFor(action, pr)) {
+      disarm();
+      armed = { project: pr.project, number: pr.number, action: action, headSha: pr.headSha,
+        until: Date.now() + ArmSeconds * 1000 };
+      armedButton = button;
       button.dataset.armed = "yes";
       button.classList.add("armed");
       button.textContent = confirm + head;
+      armTimer = setTimeout(disarm, ArmSeconds * 1000);
       return;
+    }
+    armed = null;
+    armedButton = null;
+    if (armTimer !== null) {
+      clearTimeout(armTimer);
+      armTimer = null;
     }
     button.disabled = true;
     tap(action, pr);
@@ -730,6 +794,7 @@ function onVisibilityChange() {
     startRefresh();
   } else {
     stopRefresh();
+    disarm();
   }
 }
 
