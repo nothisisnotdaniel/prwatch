@@ -53,3 +53,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#46](backlog/046-compare-the-full-file-mode-in.md) Compare the full file mode in the release tarball check
 - [ ] [#48](backlog/048-say-when-restore-sh-can-t.md) Say when restore.sh can't reach the keychain, not only that the prompt was denied
 - [?] [#49](backlog/049-show-factory-job-pull-requests-with.md) Show factory job pull requests with their job and reused reviews (after: factory#77)
+- [ ] [#50](backlog/050-skip-the-ci-tests-for-backlog.md) Skip the CI tests for backlog and lessons changes (after: factory#85)
