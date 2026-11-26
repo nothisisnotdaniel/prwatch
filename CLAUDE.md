@@ -101,8 +101,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     writes an executable `python3` fake `claude` in the test's folder that logs argv, cwd and environment, prints
     `stream.jsonl` (`#wait` blocks until a `release` file, `#flood` floods, `#orphan` double-forks a grandchild in
     a new session that keeps stdout and stderr open, writes `orphan-pid` and sleeps until a `release-orphan`
-    file), writes `stderr.txt` and exits with `exit-code`; tests supply the environment through the runners' test-only `ReadVariable` hook and never write
-    the process environment. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
+    file), writes `stderr.txt` and exits with `exit-code`; tests supply the environment through the runners'
+    test-only `ReadVariable` hook and never write the process environment. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
     `RunTimeoutSeconds` (default 3600).
   - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`);
     a failure after its process started (before the monitor runs) kills the run with its tree, releases the lock and

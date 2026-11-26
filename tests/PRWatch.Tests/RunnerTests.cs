@@ -1151,26 +1151,26 @@ public sealed class RunnerTests
         return FakeClaude.OrphanPid(rig.Claude)!.Value;
     }
 
-    /// <summary>Lets the orphan of <c>#orphan</c> exit and kills it by its pid, so no process outlives the
+    /// <summary>Kills the orphan of <c>#orphan</c> by its pid while it still sleeps (before the release, so the pid
+    /// cannot have been reused yet), then lets it exit in case the kill missed it, so no process outlives the
     /// test.</summary>
     private static void EndTheOrphan(Rig rig)
     {
-        FakeClaude.ReleaseOrphan(rig.Claude);
-        if (FakeClaude.OrphanPid(rig.Claude) is not int pid)
+        if (FakeClaude.OrphanPid(rig.Claude) is int pid)
         {
-            return;
+            try
+            {
+                using Process process = Process.GetProcessById(pid);
+                process.Kill();
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException
+                or Win32Exception)
+            {
+                // Already gone.
+            }
         }
 
-        try
-        {
-            using Process process = Process.GetProcessById(pid);
-            process.Kill();
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException
-            or Win32Exception)
-        {
-            // Already gone.
-        }
+        FakeClaude.ReleaseOrphan(rig.Claude);
     }
 
     /// <summary>Blocks the start hook until the fake claude has written its pid (it then waits on stdin, which only
