@@ -179,15 +179,15 @@ public sealed class ProjectFilesTests
     }
 
     [Fact]
-    public void Workflows_GiveTheRegistryTokenOnlyToTheThreeRestoreSteps()
+    public void Workflows_GiveTheRegistryTokenOnlyToTheFourRestoreSteps()
     {
         string all = RepoFiles.Read(".github/workflows/ci.yml") + RepoFiles.Read(".github/workflows/release.yml");
 
-        Assert.Equal(3, Count(all, Credential));
-        Assert.Equal(3, Count(all, "NuGetPackageSourceCredentials_github: "));
-        Assert.Equal(3, Count(all, "secrets."));
-        Assert.Equal(3, Count(all, "      - name: Restore\n        env:\n          " + Credential + "\n        run: dotnet restore"));
-        Assert.Equal(3, Count(all, "      packages: read\n"));
+        Assert.Equal(4, Count(all, Credential));
+        Assert.Equal(4, Count(all, "NuGetPackageSourceCredentials_github: "));
+        Assert.Equal(4, Count(all, "secrets."));
+        Assert.Equal(4, Count(all, "      - name: Restore\n        env:\n          " + Credential + "\n        run: dotnet restore"));
+        Assert.Equal(4, Count(all, "      packages: read\n"));
         Assert.DoesNotContain("packages: write", all, StringComparison.Ordinal);
     }
 

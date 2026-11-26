@@ -32,7 +32,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
             StringComparison.Ordinal);
         Assert.DoesNotContain("\n  push:", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("workflow_dispatch", workflow, StringComparison.Ordinal);
-        Assert.Equal(["version", "macos-tests", "macos", "release"], JobNames(workflow));
+        Assert.Equal(["version", "macos-tests", "macos", "verify", "release"], JobNames(workflow));
     }
 
     [Fact]
@@ -43,16 +43,17 @@ public sealed class ReleaseWorkflowTests : IDisposable
         Assert.Equal(["contents: read"], Permissions(Job(workflow, "version")));
         Assert.Equal(["contents: read", "packages: read"], Permissions(Job(workflow, "macos-tests")));
         Assert.Equal(["contents: read", "packages: read"], Permissions(Job(workflow, "macos")));
+        Assert.Equal(["contents: read", "packages: read"], Permissions(Job(workflow, "verify")));
         Assert.Equal(
             ["contents: write", "id-token: write", "attestations: write"], Permissions(Job(workflow, "release")));
         int permissionLines = workflow.Split('\n').Count(line => line.TrimStart().StartsWith("permissions:", StringComparison.Ordinal));
-        Assert.Equal(5, permissionLines);
-        foreach (string job in new[] { "version", "macos-tests", "macos" })
+        Assert.Equal(6, permissionLines);
+        foreach (string job in new[] { "version", "macos-tests", "macos", "verify" })
         {
             Assert.DoesNotContain("write", string.Join('\n', Permissions(Job(workflow, job))), StringComparison.Ordinal);
         }
 
-        Assert.Equal(2, Count(workflow, "      packages: "));
+        Assert.Equal(3, Count(workflow, "      packages: "));
         Assert.DoesNotContain("packages: write", workflow, StringComparison.Ordinal);
     }
 
@@ -168,11 +169,12 @@ public sealed class ReleaseWorkflowTests : IDisposable
         string check = Step(RepoFiles.Read(".github/workflows/ci.yml"), "Check the RoomKit package");
 
         Assert.Contains("gh attestation verify \"$package\" --repo nothisisnotdaniel/roomkit", check, StringComparison.Ordinal);
-        Assert.Equal(2, Count(workflow, check));
+        Assert.Equal(3, Count(workflow, check));
         foreach ((string name, string restoreRun) in new[]
         {
             ("macos-tests", "run: dotnet restore\n"),
             ("macos", "run: dotnet restore src/PRWatch -r osx-arm64\n"),
+            ("verify", "run: dotnet restore src/PRWatch -r osx-arm64\n"),
         })
         {
             string job = Job(workflow, name);
@@ -222,7 +224,8 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
         Assert.Contains("    needs: version\n", tests, StringComparison.Ordinal);
         Assert.Contains("    needs: [version, macos-tests]\n", Job(workflow, "macos"), StringComparison.Ordinal);
-        Assert.Contains("    needs: [version, macos]\n", Job(workflow, "release"), StringComparison.Ordinal);
+        Assert.Contains("    needs: [version, macos]\n", Job(workflow, "verify"), StringComparison.Ordinal);
+        Assert.Contains("    needs: [version, macos, verify]\n", Job(workflow, "release"), StringComparison.Ordinal);
         Assert.Equal(["run: dotnet restore", "run: dotnet build -warnaserror --no-restore", "run: dotnet test --no-build"], RunBlocks(tests).Where(run => run.StartsWith("run: dotnet", StringComparison.Ordinal)));
         Assert.True(
             tests.IndexOf("run: dotnet build -warnaserror --no-restore", StringComparison.Ordinal) <
@@ -236,7 +239,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
         Assert.Contains("      RELEASE_VERSION: ${{ needs.version.outputs.release_version }}\n", macos, StringComparison.Ordinal);
         Assert.Contains(
-            "run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version=\"$RELEASE_VERSION\" -o \"$RUNNER_TEMP/publish\"\n",
+            "run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version=\"$RELEASE_VERSION\" -p:ContinuousIntegrationBuild=true -o \"$RUNNER_TEMP/publish\"\n",
             Step(macos, "Publish"),
             StringComparison.Ordinal);
 
@@ -373,7 +376,8 @@ public sealed class ReleaseWorkflowTests : IDisposable
         string download = Step(release, "Collect the build artifact");
         Assert.Contains("name: macos-release", download, StringComparison.Ordinal);
         Assert.Contains("path: dist", download, StringComparison.Ordinal);
-        Assert.Contains("TARBALL_SHA256: ${{ needs.macos.outputs.tarball_sha256 }}", Step(release, "Check the downloaded files"), StringComparison.Ordinal);
+        Assert.Contains("          TARBALL_SHA256: ${{ needs.macos.outputs.tarball_sha256 }}\n", Step(release, "Check the downloaded files"), StringComparison.Ordinal);
+        Assert.Contains("          VERIFIED_SHA256: ${{ needs.verify.outputs.tarball_sha256 }}\n", Step(release, "Check the downloaded files"), StringComparison.Ordinal);
         Assert.Contains(
             "shasum -a 256 \"prwatch-$RELEASE_VERSION-osx-arm64.tar.gz\" > SHA256SUMS", Step(release, "Checksums"), StringComparison.Ordinal);
         Assert.Contains(
@@ -406,7 +410,13 @@ public sealed class ReleaseWorkflowTests : IDisposable
     [InlineData("short", 1)]
     [InlineData("empty", 1)]
     [InlineData("other", 1)]
-    public void Release_CheckStep_AcceptsOnlyTheReportedTarball(string scene, int exit)
+    [InlineData("verified-upper", 1)]
+    [InlineData("verified-short", 1)]
+    [InlineData("verified-empty", 1)]
+    [InlineData("verified-unset", 1)]
+    [InlineData("verified-other", 1)]
+    [InlineData("verified-long", 1)]
+    public void Release_CheckStep_AcceptsOnlyTheReportedAndVerifiedTarball(string scene, int exit)
     {
         string check = RunScript(Step(Job(Workflow(), "release"), "Check the downloaded files"));
         string dist = Path.Combine(folder, "dist");
@@ -442,11 +452,129 @@ public sealed class ReleaseWorkflowTests : IDisposable
             "other" => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("other"))),
             _ => hash,
         };
+        string verified = scene switch
+        {
+            "verified-upper" => hash.ToUpperInvariant(),
+            "verified-short" => hash[..63],
+            "verified-long" => hash + "0",
+            "verified-empty" => "",
+            "verified-other" => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("other"))),
+            _ => hash,
+        };
         Dictionary<string, string> env = new() { ["RELEASE_VERSION"] = "0.1.0", ["TARBALL_SHA256"] = reported };
+        if (scene != "verified-unset")
+        {
+            env["VERIFIED_SHA256"] = verified;
+        }
 
         (int code, _, _) = Run(["/bin/bash", "-e", WriteScript(check)], "", env);
 
         Assert.Equal(exit, code);
+    }
+
+    [Fact]
+    public void Verify_RepeatsTheMacosBuildStepsByteForByte_ThenChecksHashesAndCompares()
+    {
+        string workflow = Workflow();
+        string macos = Job(workflow, "macos");
+        string verify = Job(workflow, "verify");
+
+        Assert.Contains("    runs-on: macos-15\n", verify, StringComparison.Ordinal);
+        Assert.Contains("      RELEASE_VERSION: ${{ needs.version.outputs.release_version }}\n", verify, StringComparison.Ordinal);
+        foreach (string name in new[]
+        {
+            "Check out the release commit", "Set up .NET 10", "Restore", "Check the RoomKit package", "Publish",
+            "Smoke check the published app", "Pack",
+        })
+        {
+            Assert.Equal(Step(macos, name), Step(verify, name));
+        }
+
+        Assert.Contains("persist-credentials: false", Step(verify, "Check out the release commit"), StringComparison.Ordinal);
+        Assert.Contains("ref: ${{ needs.version.outputs.release_target }}", Step(verify, "Check out the release commit"), StringComparison.Ordinal);
+        Assert.Contains(" -p:ContinuousIntegrationBuild=true ", Step(macos, "Publish"), StringComparison.Ordinal);
+        Assert.Contains(" -p:ContinuousIntegrationBuild=true ", Step(verify, "Publish"), StringComparison.Ordinal);
+
+        Assert.Equal(
+            [
+                "Check out the release commit", "Set up .NET 10", "Restore", "Check the RoomKit package", "Publish",
+                "Smoke check the published app", "Pack", "Collect the build artifact", "Check and hash the downloaded tarball",
+                "Compare the tarballs",
+            ],
+            StepNames(verify));
+        string download = Step(verify, "Collect the build artifact");
+        Assert.Contains("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0\n", download, StringComparison.Ordinal);
+        Assert.Contains("          name: macos-release\n", download, StringComparison.Ordinal);
+        Assert.Contains("          path: downloaded\n", download, StringComparison.Ordinal);
+        Assert.Contains("        id: check\n", Step(verify, "Check and hash the downloaded tarball"), StringComparison.Ordinal);
+        Assert.Contains("      tarball_sha256: ${{ steps.check.outputs.tarball_sha256 }}\n", verify, StringComparison.Ordinal);
+        Assert.Equal(
+            "      - name: Compare the tarballs\n        run: python3 -I .github/scripts/compare-release.py " +
+                "\"dist/prwatch-$RELEASE_VERSION-osx-arm64.tar.gz\" \"downloaded/prwatch-$RELEASE_VERSION-osx-arm64.tar.gz\"\n",
+            Step(verify, "Compare the tarballs"));
+
+        // Read-only: no upload, no release, no attestation and no token beyond Restore and the RoomKit check.
+        Assert.DoesNotContain("upload-artifact", verify, StringComparison.Ordinal);
+        Assert.DoesNotContain("attest-build-provenance", verify, StringComparison.Ordinal);
+        Assert.DoesNotContain("gh release", verify, StringComparison.Ordinal);
+        Assert.Equal(1, Count(verify, "secrets."));
+        Assert.Equal(1, Count(verify, "github.token"));
+    }
+
+    [Theory]
+    [InlineData("good", 0)]
+    [InlineData("extra", 1)]
+    [InlineData("hidden", 1)]
+    [InlineData("folder", 1)]
+    [InlineData("symlink", 1)]
+    [InlineData("missing", 1)]
+    [InlineData("tarball-folder", 1)]
+    public void Verify_CheckStep_HashesOnlyTheRegularFileTarball(string scene, int exit)
+    {
+        string check = RunScript(Step(Job(Workflow(), "verify"), "Check and hash the downloaded tarball"));
+        string downloaded = Path.Combine(folder, "downloaded");
+        Directory.CreateDirectory(downloaded);
+        string tarball = Path.Combine(downloaded, "prwatch-0.1.0-osx-arm64.tar.gz");
+        byte[] bytes = Encoding.UTF8.GetBytes("tarball bytes");
+        string hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
+        switch (scene)
+        {
+            case "symlink":
+                string real = Path.Combine(folder, "real.tar.gz");
+                File.WriteAllBytes(real, bytes);
+                File.CreateSymbolicLink(tarball, real);
+                break;
+            case "tarball-folder":
+                Directory.CreateDirectory(tarball);
+                break;
+            case "missing":
+                break;
+            default:
+                File.WriteAllBytes(tarball, bytes);
+                break;
+        }
+
+        if (scene == "extra")
+        {
+            File.WriteAllText(Path.Combine(downloaded, "SHA256SUMS"), "x\n");
+        }
+        else if (scene == "hidden")
+        {
+            File.WriteAllText(Path.Combine(downloaded, ".extra"), "x\n");
+        }
+        else if (scene == "folder")
+        {
+            Directory.CreateDirectory(Path.Combine(downloaded, "sub"));
+        }
+
+        string output = Path.Combine(folder, "github-output");
+        File.WriteAllText(output, "");
+        Dictionary<string, string> env = new() { ["RELEASE_VERSION"] = "0.1.0", ["GITHUB_OUTPUT"] = output };
+
+        (int code, _, _) = Run(["/bin/bash", "-e", WriteScript(check)], "", env);
+
+        Assert.Equal(exit, code);
+        Assert.Equal(exit == 0 ? "tarball_sha256=" + hash + "\n" : "", File.ReadAllText(output));
     }
 
     [Theory]
@@ -484,7 +612,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
         string workflow = Workflow();
 
         List<string> runs = RunBlocks(workflow);
-        Assert.Equal(15, runs.Count);
+        Assert.Equal(22, runs.Count);
         foreach (string run in runs)
         {
             Assert.DoesNotContain("${{", run, StringComparison.Ordinal);
@@ -493,7 +621,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
         string[] uses = [.. workflow.Split('\n')
             .Where(line => line.TrimStart().StartsWith("uses:", StringComparison.Ordinal) ||
                 line.TrimStart().StartsWith("- uses:", StringComparison.Ordinal))];
-        Assert.Equal(8, uses.Length);
+        Assert.Equal(11, uses.Length);
         foreach (string line in uses)
         {
             Assert.Matches(@"uses: [\w.-]+/[\w.-]+@[0-9a-f]{40}( #.*)?$", line);
@@ -511,12 +639,12 @@ public sealed class ReleaseWorkflowTests : IDisposable
             Assert.Contains(uses, line => line.EndsWith(pin, StringComparison.Ordinal));
         }
 
-        // The only secret is the job token, on the two Restore steps.
-        Assert.Equal(2, Count(workflow, "secrets."));
-        Assert.Equal(2, Count(workflow, "Password=${{ secrets.GITHUB_TOKEN }}\n"));
+        // The only secret is the job token, on the three Restore steps.
+        Assert.Equal(3, Count(workflow, "secrets."));
+        Assert.Equal(3, Count(workflow, "Password=${{ secrets.GITHUB_TOKEN }}\n"));
         Assert.DoesNotContain("pull_request_target", workflow, StringComparison.Ordinal);
         int checkouts = Count(workflow, "uses: actions/checkout@");
-        Assert.Equal(3, checkouts);
+        Assert.Equal(4, checkouts);
         Assert.Equal(checkouts, Count(workflow, "persist-credentials: false"));
     }
 
