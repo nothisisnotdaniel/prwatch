@@ -57,7 +57,8 @@ jobs:
             exit 1
           fi
           # Every attestation must come from roomkit's release.yml on main, run by a merged pull request on a
-          # GitHub-hosted runner; true only then.
+          # GitHub-hosted runner; true only then. A pull_request run with refs/heads/main is a closed PR running
+          # main's own release.yml, so "merged" rests on that workflow's merged == true gate in roomkit.
           if ! verified=$(gh attestation verify "$package" --repo nothisisnotdaniel/roomkit --cert-identity https://github.com/nothisisnotdaniel/roomkit/.github/workflows/release.yml@refs/heads/main --cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref refs/heads/main --deny-self-hosted-runners --format json --jq 'length > 0 and all(.[]; .verificationResult.signature.certificate | .githubWorkflowTrigger == "pull_request" and .sourceRepositoryRef == "refs/heads/main" and .runnerEnvironment == "github-hosted")') || [ "$verified" != "true" ]; then
             echo "RoomKit.$version.nupkg has no valid roomkit release attestation." >&2
             exit 1

@@ -12,7 +12,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
 - **Stack:** .NET 10 ASP.NET Core minimal API on the **RoomKit core only** (the `RoomKit` NuGet package from the
   `nothisisnotdaniel/roomkit` repo, restored from GitHub Packages, source `github` =
   `https://nuget.pkg.github.com/nothisisnotdaniel/index.json` in `nuget.config`, which maps only `RoomKit` there and
-  everything else to nuget.org; docs: `https://github.com/nothisisnotdaniel/roomkit/blob/main/docs/roomkit.md`). No `FactoryModule`, no `IJobFormat`: `Program.cs` is
+  everything else to nuget.org; docs: `https://github.com/nothisisnotdaniel/roomkit/blob/main/docs/roomkit.md`).
+  No `FactoryModule`, no `IJobFormat`: `Program.cs` is
   `return RoomKitApp.Run(args, PrWatchApp.Options, PrWatchApp.Map, addServices: PrWatchApp.AddServices);`.
   Plain HTML/CSS/JS in `wwwroot` (no CDN, no build step, strict CSP), xUnit tests with `Microsoft.AspNetCore.Mvc.Testing`. No other package without a reason
   in the spec.
