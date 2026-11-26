@@ -473,7 +473,7 @@ public sealed class RunnerTests
         }
 
         using Watcher watcher = new(rig.Watch.Settings, rig.Watch.Status,
-            new PollRunner(TimeSpan.FromSeconds(60)), rig.Runner, rig.Watch.Clock);
+            new PollRunner(TimeSpan.FromSeconds(60)), rig.Runner, rig.Watch.Ledger, rig.Watch.Clock);
         rig.Watch.Output([WatcherRig.Pr("Alpha", 1)]);
         await watcher.PollOnceAsync(CancellationToken.None);
         await rig.WaitForEnd("Alpha-1");
@@ -575,6 +575,79 @@ public sealed class RunnerTests
         Assert.True(rig.Watch.Status.Current.Login.ExpiresSoon);
     }
 
+    // --- token brake (item 5, AC-7, AC-8) -------------------------------------------------------
+
+    [Fact]
+    public void Start_WhileTheBrakeHolds_StartsNoClaude_AndWritesNoLedgerEntry()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, Result());
+        DateTimeOffset now = rig.Watch.Clock.GetUtcNow();
+        rig.Watch.Ledger.Start(now.AddMinutes(-30));
+        rig.Watch.Ledger.Start(now.AddMinutes(-20));
+        rig.Watch.Ledger.Start(now.AddMinutes(-10));
+
+        Assert.False(rig.Runner.TryStart(Alpha1));
+
+        Assert.False(rig.Runner.IsBusy);
+        Assert.Empty(rig.Calls());
+        Assert.Equal(3, rig.Watch.Ledger.Entries.Count);
+        Assert.False(rig.Watch.Status.Current.Runs.ContainsKey("Alpha-1"));
+        Assert.Equal(
+            new BrakeStatus { Holding = true, Reason = TokenBrake.RunsPerHour, Until = now.AddMinutes(30) },
+            rig.Watch.Status.Current.Brake);
+    }
+
+    [Fact]
+    public async Task End_TakesTheLastResultsCostIntoTheLedger_AndARateLimitLeavesTheBrakeHolding()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude,
+            Result(cost: 0.25),
+            RateLimit(0.5, 0.3, "rejected", "\"2026-11-26T15:00:00Z\""),
+            Result(cost: 0.6));
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        await rig.WaitForEnd("Alpha-1");
+
+        LedgerEntry entry = Assert.Single(rig.Watch.Ledger.Entries);
+        Assert.Equal(rig.Watch.Clock.GetUtcNow(), entry.StartedAt);
+        Assert.Equal(rig.Watch.Clock.GetUtcNow(), entry.EndedAt);
+        Assert.Equal(0.6, entry.CostUsd);
+        Assert.Equal(entry, Assert.Single(new UsageLedger(rig.Watch.DataFolder, rig.Watch.Status, rig.Watch.Clock).Entries));
+        Assert.Equal(
+            new BrakeStatus
+            {
+                Holding = true,
+                Reason = TokenBrake.RateLimited,
+                Until = new DateTimeOffset(2026, 11, 26, 15, 0, 0, TimeSpan.Zero),
+            },
+            rig.Watch.Status.Current.Brake);
+        Assert.False(rig.Runner.TryStart(Alpha1 with { Number = 2 }));
+        Assert.Single(rig.Calls());
+    }
+
+    [Fact]
+    public async Task Start_AddsTheLedgerEntryWhileTheRunGoes_AndARunWithoutAResultKeepsNoCost()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, "{\"type\":\"system\"}", "#wait");
+        DateTimeOffset startedAt = rig.Watch.Clock.GetUtcNow();
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+
+        LedgerEntry started = Assert.Single(rig.Watch.Ledger.Entries);
+        Assert.Equal(new LedgerEntry { StartedAt = startedAt }, started);
+        Assert.True(rig.Runner.IsBusy);
+        rig.Watch.Clock.Advance(TimeSpan.FromMinutes(3));
+        FakeClaude.Release(rig.Claude);
+        await rig.WaitForEnd("Alpha-1");
+
+        Assert.Equal(new LedgerEntry { StartedAt = startedAt, EndedAt = startedAt.AddMinutes(3), CostUsd = null },
+            Assert.Single(rig.Watch.Ledger.Entries));
+        Assert.Equal(new BrakeStatus(), rig.Watch.Status.Current.Brake);
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private static string Result(double cost = 0.25, bool isError = false, string text = "done",
@@ -631,7 +704,7 @@ public sealed class RunnerTests
             CallsFile = Path.Combine(Watch.Folder, "claude-calls.jsonl");
             Claude = FakeClaude.Write(Path.Combine(Watch.Folder, "claude-bin"), CallsFile);
             Watch.Change("{\"enabled\":true,\"claudePath\":" + JsonSerializer.Serialize(Claude) + "}");
-            Runner = new ClaudeReviewRunner(Watch.Settings, Watch.Status, Watch.Clock,
+            Runner = new ClaudeReviewRunner(Watch.Settings, Watch.Status, Watch.Ledger, Watch.Clock,
                 timeout ?? TimeSpan.FromSeconds(ClaudeReviewRunner.DefaultTimeoutSeconds));
         }
 

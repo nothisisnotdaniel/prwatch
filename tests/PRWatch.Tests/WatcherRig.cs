@@ -5,8 +5,8 @@ using System.Text.Json.Nodes;
 namespace PRWatch.Tests;
 
 /// <summary>A watcher built straight on its stores (no host), in its own temp folder: a test factory root with
-/// the fake <c>job.py</c>, a data folder, the calls file outside the root, a <see cref="FakeClock"/> and a
-/// <see cref="FakeReviewRunner"/>. The settings start with the root and <c>quietMinutes</c> 0.</summary>
+/// the fake <c>job.py</c>, a data folder, the calls file outside the root, a <see cref="FakeClock"/>, a
+/// <see cref="FakeReviewRunner"/> and a <see cref="UsageLedger"/> on the data folder. The settings start with the root and <c>quietMinutes</c> 0.</summary>
 internal sealed class WatcherRig : IDisposable
 {
     public const string ShaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -53,6 +53,9 @@ internal sealed class WatcherRig : IDisposable
 
     public StatusStore Status { get; private set; } = null!;
 
+    /// <summary>The usage ledger on <see cref="DataFolder"/>, rebuilt by <see cref="Open"/>.</summary>
+    public UsageLedger Ledger { get; private set; } = null!;
+
     public SettingsStore Settings { get; private set; } = null!;
 
     public Watcher Watcher { get; private set; } = null!;
@@ -65,7 +68,8 @@ internal sealed class WatcherRig : IDisposable
         Settings = new SettingsStore(DataFolder, Root, Status);
         Runner.Status = Status;
         Runner.Clock = Clock;
-        Watcher = new Watcher(Settings, Status, new PollRunner(Timeout, SearchPath), Runner, Clock);
+        Ledger = new UsageLedger(DataFolder, Status, Clock);
+        Watcher = new Watcher(Settings, Status, new PollRunner(Timeout, SearchPath), Runner, Ledger, Clock);
     }
 
     public void Change(string json)

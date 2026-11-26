@@ -45,19 +45,24 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
     private readonly StatusStore status;
 
+    private readonly UsageLedger ledger;
+
     private readonly TimeProvider time;
 
     private Run? current;
 
     private bool stopping;
 
-    public ClaudeReviewRunner(SettingsStore settings, StatusStore status, TimeProvider time, TimeSpan timeout)
+    public ClaudeReviewRunner(SettingsStore settings, StatusStore status, UsageLedger ledger, TimeProvider time,
+        TimeSpan timeout)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(status);
+        ArgumentNullException.ThrowIfNull(ledger);
         ArgumentNullException.ThrowIfNull(time);
         this.settings = settings;
         this.status = status;
+        this.ledger = ledger;
         this.time = time;
         Timeout = timeout;
     }
@@ -95,9 +100,10 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
     }
 
     /// <summary>Starts the run, or returns false and starts nothing: while a run is going or the app stops, while
-    /// <c>enabled</c> is off, for a project not in the discovered list, a number outside 1..999999999 or a head that
+    /// <c>enabled</c> is off, while the token brake holds (written to the status then), for a project not in the discovered list, a number outside 1..999999999 or a head that
     /// is no sha, with no model for the mode (<c>model_unknown</c>) or no usable claude (<c>claude_not_found</c>).
-    /// On true the run's <c>headSha</c> and <c>startedAt</c> are in the status.</summary>
+    /// On true the run's <c>headSha</c> and <c>startedAt</c> are in the status and its start is in the usage
+    /// ledger.</summary>
     public bool TryStart(ReviewPick pick)
     {
         ArgumentNullException.ThrowIfNull(pick);
@@ -116,6 +122,15 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                 || !PrRules.IsSha(pick.HeadSha)
                 || PrsDir(root) is not { } prs)
             {
+                return false;
+            }
+
+            IReadOnlyList<LedgerEntry> entries = ledger.Entries;
+            DateTimeOffset checkedAt = time.GetUtcNow();
+            BrakeStatus brake = TokenBrake.Evaluate(status.Current.PlanUsage, entries, now, checkedAt);
+            if (brake.Holding)
+            {
+                status.Update(previous => previous with { Brake = brake });
                 return false;
             }
 
@@ -160,6 +175,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
             string key = PrRules.RunKey(pick.Project, pick.Number);
             DateTimeOffset startedAt = time.GetUtcNow();
+            LedgerEntry entry = ledger.Start(startedAt);
             status.Update(previous => previous with
             {
                 Runs = previous.Runs.SetItem(key, new RunStatus { HeadSha = pick.HeadSha, StartedAt = startedAt }),
@@ -168,7 +184,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                         ? null
                         : previous.LastError,
             });
-            Run run = new(process, key, pick.HeadSha, new CancellationTokenSource(Timeout, time));
+            Run run = new(process, key, pick.HeadSha, entry, new CancellationTokenSource(Timeout, time));
             current = run;
             run.Monitor = Task.Run(() => MonitorAsync(run));
             return true;
@@ -331,6 +347,9 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
             }
 
             bool? isError = figures.AnyError ? true : figures.Results > 0 ? false : null;
+            ledger.End(run.Entry, now, figures.CostUsd);
+            IReadOnlyList<LedgerEntry> entries = ledger.Entries;
+            Settings brakeSettings = settings.Current;
             status.Update(previous =>
             {
                 RunStatus started = previous.Runs.TryGetValue(run.Key, out RunStatus? found)
@@ -364,6 +383,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                         ModelUsage = figures.ModelUsage,
                     }),
                     Login = login,
+                    Brake = TokenBrake.Evaluate(previous.PlanUsage, entries, brakeSettings, now),
                 };
             });
         }
@@ -653,17 +673,18 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
     [GeneratedRegex(@"\A[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex FieldPattern();
 
-    /// <summary>One running process, its <c>runs</c> key and head, its timeout and the first reason it was ended
+    /// <summary>One running process, its <c>runs</c> key and head, its ledger entry, its timeout and the first reason it was ended
     /// for (<c>timeout</c>, <c>output_too_large</c>, <c>stopped</c>).</summary>
     private sealed class Run
     {
         private string? reason;
 
-        public Run(Process process, string key, string headSha, CancellationTokenSource timeout)
+        public Run(Process process, string key, string headSha, LedgerEntry entry, CancellationTokenSource timeout)
         {
             Process = process;
             Key = key;
             HeadSha = headSha;
+            Entry = entry;
             Timeout = timeout;
         }
 
@@ -672,6 +693,9 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
         public string Key { get; }
 
         public string HeadSha { get; }
+
+        /// <summary>The run's entry in the usage ledger.</summary>
+        public LedgerEntry Entry { get; }
 
         public CancellationTokenSource Timeout { get; }
 

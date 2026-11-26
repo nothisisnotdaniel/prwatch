@@ -73,7 +73,8 @@ internal sealed class StatusStore
     }
 
     /// <summary>The status in the file, or <see cref="Status.Initial"/> when it is missing or invalid. Invalid
-    /// <c>prs</c>, <c>skipped</c> or <c>pick</c> content loads as the empty value and the rest still loads;
+    /// <c>prs</c>, <c>skipped</c> or <c>pick</c> content loads as the empty value and the rest still loads, a brake
+    /// without a reason from <see cref="TokenBrake.Reasons"/> loads as not holding;
     /// a <c>runs</c> key that is not <c>&lt;repo&gt;-&lt;n&gt;</c> (<see cref="PrRules.IsRunKey"/>) is
     /// dropped.</summary>
     private static Status Load(string path)
@@ -106,6 +107,9 @@ internal sealed class StatusStore
             return loaded with
             {
                 Runs = runs,
+                Brake = loaded.Brake.Reason is { } reason && TokenBrake.Reasons.Contains(reason, StringComparer.Ordinal)
+                    ? loaded.Brake
+                    : new BrakeStatus(),
                 Prs = LoadPart<List<PrStatus>>(prs, list => list.Count <= PrRules.MaxPrs
                     && list.All(pr => pr is not null && PrRules.IsValid(pr))) ?? [],
                 Skipped = LoadPart<List<SkipStatus>>(skipped, list => list.All(skip => skip is not null

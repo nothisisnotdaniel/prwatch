@@ -464,7 +464,10 @@ public sealed class WatcherTests
                 rig.Runner.IsBusy = true;
                 break;
             case "brake-holding":
-                rig.Status.Update(status => status with { Brake = new BrakeStatus { Holding = true, Reason = "x" } });
+                rig.Status.Update(status => status with
+                {
+                    PlanUsage = new PlanUsage { Limited = true, At = rig.Clock.GetUtcNow() },
+                });
                 break;
             case "needs-login":
                 rig.Status.Update(status => status with { Login = new LoginStatus { State = LoginStatus.NeedsLogin } });
@@ -704,6 +707,66 @@ public sealed class WatcherTests
         Assert.Equal(before.Skipped, after.Skipped);
         Assert.Equal(before.Pick, after.Pick);
         Assert.NotNull(after.Pick);
+    }
+
+    // --- token brake (item 5, AC-6) -------------------------------------------------------------
+
+    [Fact]
+    public async Task Brake_RunsPerHourHolds_NoPickAndNoStart_UntilTheFirstPollAtUntil()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1)]);
+        DateTimeOffset oldest = rig.Clock.GetUtcNow().AddMinutes(-50);
+        rig.Ledger.Start(oldest);
+        rig.Ledger.Start(rig.Clock.GetUtcNow().AddMinutes(-20));
+        rig.Ledger.Start(rig.Clock.GetUtcNow().AddMinutes(-5));
+
+        await rig.Poll();
+
+        using (JsonDocument file = JsonDocument.Parse(File.ReadAllBytes(rig.Status.Path)))
+        {
+            JsonElement brake = file.RootElement.GetProperty("brake");
+            Assert.True(brake.GetProperty("holding").GetBoolean());
+            Assert.Equal("runs_per_hour", brake.GetProperty("reason").GetString());
+            Assert.Equal("2026-11-26T10:10:00.000Z", brake.GetProperty("until").GetString());
+            Assert.Equal(JsonValueKind.Null, file.RootElement.GetProperty("pick").ValueKind);
+        }
+
+        Assert.Empty(rig.Runner.Calls);
+
+        rig.Clock.Advance(oldest.AddHours(1) - rig.Clock.GetUtcNow() - TimeSpan.FromTicks(1));
+        await rig.Poll();
+        Assert.Empty(rig.Runner.Calls);
+        Assert.True(rig.Status.Current.Brake.Holding);
+
+        rig.Clock.Advance(TimeSpan.FromTicks(1));
+        await rig.Poll();
+
+        Assert.Equal(new BrakeStatus(), rig.Status.Current.Brake);
+        ReviewPick call = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(("Alpha", 1), (call.Project, call.Number));
+        Assert.NotNull(rig.Status.Current.Pick);
+    }
+
+    [Fact]
+    public async Task Brake_IsWrittenOnEveryPoll_AndLiftsWhenTheStoredOneNoLongerHolds()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1)]);
+        rig.Status.Update(status => status with
+        {
+            Brake = new BrakeStatus
+            {
+                Holding = true,
+                Reason = TokenBrake.RateLimited,
+                Until = rig.Clock.GetUtcNow().AddHours(1),
+            },
+        });
+
+        await rig.Poll();
+
+        Assert.Equal(new BrakeStatus(), rig.Status.Current.Brake);
+        Assert.Single(rig.Runner.Calls);
     }
 
     // --- helpers ---------------------------------------------------------------------------------

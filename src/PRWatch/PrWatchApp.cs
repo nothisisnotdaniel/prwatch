@@ -48,7 +48,8 @@ internal static class PrWatchApp
         return Path.Combine(data, Options.DataFolderName);
     }
 
-    /// <summary>Registers the status and settings stores (both in the data folder, clock from the container),
+    /// <summary>Registers the status and settings stores and the usage ledger (all in the data folder, clock from
+    /// the container),
     /// loads the settings at start, so an unreadable file shows in the status at once, and adds the watcher with
     /// its poll runner and the review runner (<see cref="ClaudeReviewRunner"/> with the config value
     /// <c>RunTimeoutSeconds</c>, unless one is already registered), which is stopped with the app.</summary>
@@ -61,10 +62,13 @@ internal static class PrWatchApp
         services.Services.AddSingleton(provider => new SettingsStore(
             folder, factoryRoot, provider.GetRequiredService<StatusStore>()));
         services.Services.AddHostedService<SettingsLoader>();
+        services.Services.AddSingleton(provider => new UsageLedger(
+            folder, provider.GetRequiredService<StatusStore>(), provider.GetRequiredService<TimeProvider>()));
         services.Services.AddSingleton(_ => PollRunner.FromConfiguration(services.Configuration));
         services.Services.TryAddSingleton<IReviewRunner>(provider => new ClaudeReviewRunner(
             provider.GetRequiredService<SettingsStore>(),
             provider.GetRequiredService<StatusStore>(),
+            provider.GetRequiredService<UsageLedger>(),
             provider.GetRequiredService<TimeProvider>(),
             ClaudeReviewRunner.TimeoutFrom(services.Configuration)));
         // Hosted services stop in reverse order: the watcher first, then the running claude run.

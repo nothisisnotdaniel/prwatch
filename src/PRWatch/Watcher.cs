@@ -24,28 +24,34 @@ internal sealed class Watcher : BackgroundService
 
     private readonly IReviewRunner runner;
 
+    private readonly UsageLedger ledger;
+
     private readonly TimeProvider time;
 
     private readonly SemaphoreSlim wake = new(0, 1);
 
     private int pollNow;
 
-    public Watcher(SettingsStore settings, StatusStore status, PollRunner poll, IReviewRunner runner, TimeProvider time)
+    public Watcher(SettingsStore settings, StatusStore status, PollRunner poll, IReviewRunner runner,
+        UsageLedger ledger, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(status);
         ArgumentNullException.ThrowIfNull(poll);
         ArgumentNullException.ThrowIfNull(runner);
+        ArgumentNullException.ThrowIfNull(ledger);
         ArgumentNullException.ThrowIfNull(time);
         this.settings = settings;
         this.status = status;
         this.poll = poll;
         this.runner = runner;
+        this.ledger = ledger;
         this.time = time;
         settings.Changed += OnSettingsChanged;
     }
 
-    /// <summary>Polls once, stores the PRs, the skipped projects, the pick and <c>login.expiresSoon</c>, and hands
+    /// <summary>Polls once, stores the PRs, the skipped projects, the token brake (<see cref="TokenBrake.Evaluate"/>
+    /// on the plan usage and the usage ledger, before the pick), the pick and <c>login.expiresSoon</c>, and hands
     /// the pick to the runner (which writes the run's start).
     /// A failed poll records its code and keeps <c>prs</c> and <c>lastPoll</c>; nothing is picked then.</summary>
     public async Task PollOnceAsync(CancellationToken cancellationToken)
@@ -78,6 +84,7 @@ internal sealed class Watcher : BackgroundService
         List<SkipStatus> skipped = ReadSkipped(top.GetProperty("skipped"), allowed);
         skipped.AddRange(active.Select(name => new SkipStatus { Project = name, Reason = SkipStatus.JobActive }));
         bool runnerBusy = runner.IsBusy;
+        IReadOnlyList<LedgerEntry> entries = ledger.Entries;
         ReviewPick? pick = null;
         status.Update(previous =>
         {
@@ -91,6 +98,7 @@ internal sealed class Watcher : BackgroundService
                 },
                 Prs = prs,
                 Skipped = skipped,
+                Brake = TokenBrake.Evaluate(previous.PlanUsage, entries, current, now),
                 Runs = previous.Runs.RemoveRange(
                     previous.Runs.Keys.Where(key => !known.Contains(PrRules.RunKeyProject(key))).ToList()),
                 LastError = previous.LastError is { } error

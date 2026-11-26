@@ -74,12 +74,12 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
 - **Layout:**
   - `PRWatch.slnx`, `Directory.Build.props` (nullable, implicit usings, code style in build), `.editorconfig`,
     `nuget.config` (the RoomKit feed).
-  - `src/PRWatch/`: `Program.cs`, `PrWatchApp` (options and routes), the watcher, the `claude` runner, the brake,
-    the request writer, settings and status; `wwwroot/` (`index.html`, `room.js`, `app.js`, icons, manifest).
+  - `src/PRWatch/`: `Program.cs`, `PrWatchApp` (options and routes), the watcher, the `claude` runner, the brake
+    (`TokenBrake`, `UsageLedger`), the request writer, settings and status; `wwwroot/` (`index.html`, `room.js`, `app.js`, icons, manifest).
   - `tests/PRWatch.Tests/`: xUnit tests with a temporary factory root and fake `job.py` / `claude` scripts.
     `FakeJobPy` writes a `job.py` that prints `poll-output.json` (exit `poll-exit`, pause `poll-sleep`) and logs its
-    argv, cwd and environment to a calls file outside the root; `WatcherRig` builds a watcher on its stores without
-    a host; `FakeClock` timers fire on `Advance`; `FakeReviewRunner` stands in for the runner
+    argv, cwd and environment to a calls file outside the root; `WatcherRig` builds a watcher on its stores and a
+    `UsageLedger` (data folder) without a host; `FakeClock` timers fire on `Advance`; `FakeReviewRunner` stands in for the runner
     (`PrWatchFactory.TestServices`; like the real runner it writes the run start to the status). `FakeClaude`
     writes an executable `python3` fake `claude` in the test's folder that logs argv, cwd and environment, prints
     `stream.jsonl` (`#wait` blocks until a `release` file, `#flood` floods), writes `stderr.txt` and exits with
