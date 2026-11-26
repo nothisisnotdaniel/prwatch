@@ -8,8 +8,9 @@
 #   and uploads only the tarball as an artifact.
 # - release needs version and macos. It downloads the artifact, checks that dist/ holds exactly the tarball and
 #   that its hash is the one macos reported, then sums, attests and publishes it. Only this job has write
-#   permissions, and it builds nothing itself. The hash check catches a file swapped or changed between jobs; it
-#   cannot catch a compromised build job, which reports its own hash.
+#   permissions; it builds nothing itself and has no checkout (gh names the repository through GH_REPO). The
+#   hash check catches a file swapped or changed between jobs; it cannot catch a compromised build job, which
+#   reports its own hash.
 # - A merged pull request from develop into main, titled "release vX.Y.Z", makes a release: vX.Y.Z (and its tag)
 #   on the merge commit (.github/scripts/release-version.sh). Closed-unmerged PRs, PRs from other branches and
 #   fork PRs are skipped by the version job's if:, and its first step checks the same again.
@@ -294,7 +295,8 @@ jobs:
 
   release:
     needs: [version, macos]
-    # Builds nothing: it checks, sums, attests and publishes the tarball the macos job made.
+    # Builds nothing: it checks, sums, attests and publishes the tarball the macos job made. It has no checkout,
+    # so no repository files sit on the runner of the one job with write permissions.
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -304,12 +306,6 @@ jobs:
       RELEASE_VERSION: ${{ needs.version.outputs.release_version }}
       RELEASE_TARGET: ${{ needs.version.outputs.release_target }}
     steps:
-      - name: Check out the release commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ needs.version.outputs.release_target }}
-          persist-credentials: false
-
       - name: Collect the build artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -372,6 +368,8 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          # No checkout here, so gh takes the repository from GH_REPO.
+          GH_REPO: ${{ github.repository }}
         run: |
           # Left unquoted below on purpose: when empty it must add no argument at all.
           PRERELEASE=""
