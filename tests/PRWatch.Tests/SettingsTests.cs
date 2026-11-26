@@ -375,6 +375,28 @@ public sealed class SettingsTests
                 .Order(StringComparer.Ordinal));
     }
 
+    [Fact]
+    public async Task SettingsAndStatusFiles_AreCreatedAs0600()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // Unix file modes only; CI runs on macOS.
+        }
+
+        using PrWatchFactory factory = NewHost(out _, out _);
+        using HttpClient client = await Start(factory);
+
+        using HttpResponseMessage posted = await Post(client, "{\"pollMinutes\":8}");
+        factory.Services.GetRequiredService<StatusStore>()
+            .Update(status => status with { LastPoll = factory.Clock.GetUtcNow() });
+
+        Assert.Equal(HttpStatusCode.OK, posted.StatusCode);
+        UnixFileMode privateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        Assert.Equal(privateMode, File.GetUnixFileMode(SettingsFile(factory)));
+        Assert.Equal(privateMode, File.GetUnixFileMode(Path.Combine(factory.DataFolder, "status.json")));
+        Assert.Empty(Directory.EnumerateFiles(factory.DataFolder, "*.tmp"));
+    }
+
     private static PrWatchFactory NewHost(out string root, out string claude)
     {
         PrWatchFactory factory = new();

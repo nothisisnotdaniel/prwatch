@@ -3,9 +3,9 @@ using System.Text.Json;
 namespace PRWatch;
 
 /// <summary>Holds the status in memory and writes it to <c>status.json</c> in the data folder after every
-/// <see cref="Update"/>, atomically through <see cref="SafeFileWriter"/> (never through a symlink). A failed write
-/// keeps the status in memory with <c>lastError</c> <c>status_write_failed</c>. On start a valid existing file is
-/// loaded; an invalid one is ignored (and replaced by the next update).</summary>
+/// <see cref="Update"/>, atomically through <see cref="SafeFileWriter"/> as <c>0600</c> (never through a symlink).
+/// A failed write keeps the status in memory with <c>lastError</c> <c>status_write_failed</c>. On start a valid
+/// existing file is loaded; an invalid one is ignored (and replaced by the next update).</summary>
 internal sealed class StatusStore
 {
     public const string FileName = "status.json";
@@ -52,7 +52,7 @@ internal sealed class StatusStore
             Status next = change(current);
             try
             {
-                SafeFileWriter.Write(Path, JsonSerializer.SerializeToUtf8Bytes(next, PrWatchJson.FileOptions));
+                PrivateFileWriter.Write(Path, JsonSerializer.SerializeToUtf8Bytes(next, PrWatchJson.FileOptions));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {

@@ -10,7 +10,7 @@ internal sealed record SettingsChange(Settings? Saved, IReadOnlyList<string> Fie
 /// <summary>Loads and saves <c>prwatch-settings.json</c> in the data folder (never RoomKit's
 /// <c>settings.json</c>). A missing file gives the defaults. A file that can't be read or breaks a rule is never
 /// overwritten on load: the settings are the defaults (so <c>enabled</c> is off) and the status gets
-/// <c>settings_unreadable</c>. Saves are atomic through <see cref="SafeFileWriter"/>.</summary>
+/// <c>settings_unreadable</c>. Saves are atomic through <see cref="SafeFileWriter"/>, as <c>0600</c>.</summary>
 internal sealed class SettingsStore
 {
     public const string FileName = "prwatch-settings.json";
@@ -66,7 +66,7 @@ internal sealed class SettingsStore
 
             try
             {
-                SafeFileWriter.Write(Path, JsonSerializer.SerializeToUtf8Bytes(merged, PrWatchJson.FileOptions));
+                PrivateFileWriter.Write(Path, JsonSerializer.SerializeToUtf8Bytes(merged, PrWatchJson.FileOptions));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
