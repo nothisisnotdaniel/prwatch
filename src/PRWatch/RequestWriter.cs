@@ -12,9 +12,9 @@ internal sealed record PrRequest(string Action, string Project, int Number, stri
 
 /// <summary>Checks a <c>review</c>, <c>merge</c> or <c>cancel</c> body and writes
 /// <c>factory/prs/&lt;repo&gt;-&lt;n&gt;/request.json</c> (<c>{"action","headSha","consent"}</c>, <c>0600</c>)
-/// atomically through no-follow folder descriptors (<see cref="FolderHandleWriter"/>): never through a symlink, only directly inside
-/// <c>&lt;root&gt;/factory/prs/</c>, missing folders created as <c>0700</c>. Only the checked number and the
-/// project matched against the discovered list shape the path.</summary>
+/// atomically through no-follow folder descriptors (<see cref="FolderHandleWriter"/>): never through a symlink,
+/// only directly inside <c>&lt;root&gt;/factory/prs/</c>, missing folders created as <c>0700</c>. Only the checked
+/// number and the project matched against the discovered list shape the path.</summary>
 internal static class RequestWriter
 {
     public const int MaxBodyBytes = 1024;

@@ -100,8 +100,8 @@ internal static class FolderHandleWriter
             }
 
             // The temp name is only random hex, never taken from a request.
-            string name32 = RandomNumberGenerator.GetHexString(32, lowercase: true);
-            string tempName = "." + fileName + "." + name32 + ".tmp";
+            string random = RandomNumberGenerator.GetHexString(32, lowercase: true);
+            string tempName = "." + fileName + "." + random + ".tmp";
             int file = CreateAt(folder, tempName,
                 Flags.WriteOnly | Flags.Create | Flags.Exclusive | Flags.NoFollow | Flags.CloseOnExec);
             if (file < 0)
@@ -161,7 +161,9 @@ internal static class FolderHandleWriter
 
     /// <summary><c>openat</c> with <c>O_CREAT</c> and the mode <c>0600</c>. The mode is a variadic argument: on
     /// Apple arm64 a variadic argument goes on the stack, not in a register, so five unused register arguments fill
-    /// x3 to x7 and the mode lands in the first stack slot; elsewhere it is passed like a fixed argument.</summary>
+    /// x3 to x7 and the mode lands in the first stack slot; elsewhere it is passed like a fixed argument. Checked by
+    /// hand on arm64 in job 448 (with the fchmod left out, the file was still 0600); the fchmod after it makes the
+    /// mode 0600 even if this slot were wrong.</summary>
     private static int CreateAt(int folder, string name, int flags)
     {
         return Flags.VariadicOnStack
