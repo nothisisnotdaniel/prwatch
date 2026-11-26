@@ -12,7 +12,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#3](backlog/003-watcher-loop.md) Watcher loop (after: #2) → 422-watcher-loop.e53dfd362cf04acca992b1b60dd36c2e
 - [x] [#4](backlog/004-headless-claude-runner.md) Headless claude runner (after: #3; factory#61) → 423-headless-claude-runner.4541c8db4c7748da877aaebbf92c84dd
 - [x] [#5](backlog/005-token-brake.md) Token brake (after: #4) → 424-token-brake.486949e398f74eacafdcc4e6dceba0e1
-- [ ] [#6](backlog/006-consent-merge-and-cancel-requests.md) Consent, Merge and Cancel requests (after: #3)
+- [x] [#6](backlog/006-consent-merge-and-cancel-requests.md) Consent, Merge and Cancel requests (after: #3) → 425-consent-merge-requests.d848652104824497849170322e175f66
 - [ ] [#7](backlog/007-web-app-ui.md) Web app UI (after: #2; #5; #6)
 - [ ] [#8](backlog/008-release-workflow-and-v0-1-0.md) Release workflow and v0.1.0 (after: #1)
 - [ ] [#9](backlog/009-install-at-login-and-auto-update.md) Install at login and auto-update (after: #7; #8)
