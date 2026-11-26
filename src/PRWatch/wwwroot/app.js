@@ -445,8 +445,10 @@ function actionButton(action, pr) {
     }
     armed = null;
     armedButton = null;
-    clearTimeout(armTimer);
-    armTimer = null;
+    if (armTimer !== null) {
+      clearTimeout(armTimer);
+      armTimer = null;
+    }
     button.disabled = true;
     tap(action, pr);
   });

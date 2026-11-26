@@ -303,7 +303,7 @@ public sealed partial class WebAppTests
             "return armedForPr(action, pr) && armed.headSha === pr.headSha && Date.now() < armed.until;",
             Body(app, "function armedFor(action, pr)").Trim());
         Assert.Contains(
-            "      return;\n    }\n    armed = null;\n    armedButton = null;\n    clearTimeout(armTimer);\n    armTimer = null;\n"
+            "      return;\n    }\n    armed = null;\n    armedButton = null;\n    if (armTimer !== null) {\n      clearTimeout(armTimer);\n      armTimer = null;\n    }\n"
             + "    button.disabled = true;\n    tap(action, pr);\n  });",
             button, StringComparison.Ordinal);
 
