@@ -518,8 +518,7 @@ public sealed partial class WebAppTests
         Assert.Contains("else if (isSent(pr))", app, StringComparison.Ordinal);
         Assert.Contains("if (!match || match.request)", app, StringComparison.Ordinal);
         Assert.Contains("clearSentIfDone(prs);", app, StringComparison.Ordinal);
-        string tap = app[tapStart..refresh];
-        Assert.DoesNotContain("action ===", tap[..tap.IndexOf("sent = {", StringComparison.Ordinal)][tap.IndexOf("const body", StringComparison.Ordinal)..].Replace("action === \"consent\"", ""), StringComparison.Ordinal);
+        Assert.DoesNotContain("action ===", app[okCheck..refresh], StringComparison.Ordinal);
         Assert.Contains(".pr-sent", css, StringComparison.Ordinal);
         Assert.Contains("prefers-color-scheme: dark", css, StringComparison.Ordinal);
     }
