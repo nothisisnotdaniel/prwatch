@@ -136,6 +136,24 @@ public sealed class RestoreScriptTests : IDisposable
     }
 
     [Fact]
+    public void File_WithoutFinalNewline_IsUsed()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteTokenFile(User + ":" + Token, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.True(code == 0, stderr);
+        Assert.Single(File.ReadAllLines(dotnetLog), line => line.StartsWith("argv: ", StringComparison.Ordinal));
+        Assert.Contains("cred: Username=" + User + ";Password=" + Token, File.ReadAllLines(dotnetLog));
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NoTokenAnywhere_FailsWithoutRunningDotnet()
     {
         if (!OperatingSystem.IsMacOS())
@@ -195,6 +213,9 @@ public sealed class RestoreScriptTests : IDisposable
     [InlineData("symlink")]
     [InlineData("no-colon")]
     [InlineData("two-lines")]
+    [InlineData("two-lines-no-final-newline")]
+    [InlineData("trailing-blank-line")]
+    [InlineData("empty")]
     public void TokenFile_Refused_FailsWithoutRunningDotnet(string scene)
     {
         if (!OperatingSystem.IsMacOS())
@@ -217,6 +238,15 @@ public sealed class RestoreScriptTests : IDisposable
             case "no-colon":
                 WriteTokenFile(Token + "\n", privateFile);
                 break;
+            case "two-lines-no-final-newline":
+                WriteTokenFile(User + ":" + Token + "\nsecond-line", privateFile);
+                break;
+            case "trailing-blank-line":
+                WriteTokenFile(User + ":" + Token + "\n\n", privateFile);
+                break;
+            case "empty":
+                WriteTokenFile("", privateFile);
+                break;
             default:
                 WriteTokenFile(User + ":" + Token + "\nsecond line\n", privateFile);
                 break;
@@ -227,6 +257,12 @@ public sealed class RestoreScriptTests : IDisposable
         Assert.Equal(2, code);
         Assert.False(File.Exists(dotnetLog));
         Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("integer expression expected", stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("unary operator expected", stderr, StringComparison.Ordinal);
+        if (scene is "two-lines" or "two-lines-no-final-newline" or "trailing-blank-line" or "empty")
+        {
+            Assert.Equal("The token file must hold exactly one line <user>:<token>.", stderr.Trim());
+        }
     }
 
     [Theory]
