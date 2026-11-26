@@ -418,7 +418,7 @@ public sealed class WatcherTests
     [InlineData("quiet-met", true)]
     [InlineData("untrusted", false)]
     [InlineData("untrusted-review-request", true)]
-    [InlineData("untrusted-merge-request", false)]
+    [InlineData("untrusted-merge-request", true)]
     [InlineData("auto-review-off", false)]
     [InlineData("job-active", false)]
     [InlineData("same-head-ran", false)]
@@ -550,6 +550,102 @@ public sealed class WatcherTests
         Assert.IsType<ClaudeReviewRunner>(runner);
         Assert.False(runner.IsBusy);
         Assert.False(runner.TryStart(new ReviewPick("Alpha", 1, Sha, true, null)));
+    }
+
+    // --- job 425: requests in Choose ------------------------------------------------------------
+
+    [Theory]
+    [InlineData("none", "plain", true)]
+    [InlineData("none", "round-current", false)]
+    [InlineData("none", "untrusted", false)]
+    [InlineData("none", "auto-review-off", false)]
+    [InlineData("none", "same-head-ran", false)]
+    [InlineData("none", "brake", false)]
+    [InlineData("none", "needs-login", false)]
+    [InlineData("none", "job-active", false)]
+    [InlineData("none", "quiet", false)]
+    [InlineData("review", "plain", true)]
+    [InlineData("merge", "plain", true)]
+    [InlineData("cancel", "plain", true)]
+    [InlineData("review", "round-current", true)]
+    [InlineData("merge", "round-current", true)]
+    [InlineData("cancel", "round-current", true)]
+    [InlineData("review", "untrusted", true)]
+    [InlineData("merge", "untrusted", true)]
+    [InlineData("cancel", "untrusted", true)]
+    [InlineData("review", "auto-review-off", true)]
+    [InlineData("merge", "auto-review-off", true)]
+    [InlineData("cancel", "auto-review-off", true)]
+    [InlineData("review", "same-head-ran", true)]
+    [InlineData("merge", "same-head-ran", true)]
+    [InlineData("cancel", "same-head-ran", true)]
+    [InlineData("review", "brake", false)]
+    [InlineData("merge", "brake", false)]
+    [InlineData("cancel", "brake", false)]
+    [InlineData("review", "needs-login", false)]
+    [InlineData("merge", "needs-login", false)]
+    [InlineData("cancel", "needs-login", false)]
+    [InlineData("review", "job-active", false)]
+    [InlineData("merge", "job-active", false)]
+    [InlineData("cancel", "job-active", false)]
+    [InlineData("review", "quiet", false)]
+    [InlineData("merge", "quiet", false)]
+    [InlineData("cancel", "quiet", false)]
+    public void Choose_ARequestBypassesRoundTrustAndSameHead_ButNotBrakeLoginJobOrQuiet(
+        string request, string condition, bool picked)
+    {
+        DateTimeOffset now = FakeClock.DefaultNow;
+        PrStatus pr = new()
+        {
+            Project = "Alpha",
+            Number = 4,
+            Title = "t",
+            Author = "a",
+            HeadSha = Sha,
+            HeadSeenAt = condition == "quiet" ? now.AddMinutes(-9) : now.AddMinutes(-11),
+            Trusted = condition != "untrusted",
+            Request = request == "none" ? null : request,
+            Round = condition == "round-current"
+                ? new RoundStatus { K = 1, HeadSha = Sha, Current = true, Clean = true }
+                : null,
+        };
+        Status status = new()
+        {
+            Prs = [pr],
+            Runs = condition == "same-head-ran"
+                ? Status.Initial.Runs.SetItem("Alpha-4", new RunStatus { HeadSha = Sha, ExitCode = 0 })
+                : Status.Initial.Runs,
+            Brake = condition == "brake" ? new BrakeStatus { Holding = true, Reason = TokenBrake.RateLimited } : new(),
+            Login = condition == "needs-login" ? new LoginStatus { State = LoginStatus.NeedsLogin } : new(),
+        };
+        Settings settings = new() { QuietMinutes = 10, AutoReviewTrusted = condition != "auto-review-off" };
+        HashSet<string> active = condition == "job-active" ? ["Alpha"] : [];
+
+        ReviewPick? pick = Watcher.Choose(status, settings, active, now);
+
+        if (picked)
+        {
+            Assert.Equal(new ReviewPick("Alpha", 4, Sha, condition != "untrusted", pr.Request), pick);
+        }
+        else
+        {
+            Assert.Null(pick);
+        }
+    }
+
+    [Fact]
+    public async Task PollSoon_WakesTheLoopForOnePoll()
+    {
+        using PrWatchFactory factory = Host(out string root, out string calls, out string claude);
+        WriteSettings(factory, root, claude);
+        using HttpClient client = factory.CreateTokenClient();
+        await WaitForLastPoll(client, factory.Clock.GetUtcNow());
+        await WatcherRig.WaitFor(() => Task.FromResult(FakeJobPy.Calls(calls).Count == 1), "the first poll");
+
+        factory.Services.GetRequiredService<Watcher>().PollSoon();
+
+        await WatcherRig.WaitFor(() => Task.FromResult(FakeJobPy.Calls(calls).Count >= 2), "the woken poll");
+        Assert.Equal(2, FakeJobPy.Calls(calls).Count);
     }
 
     // --- AC-8: the loop --------------------------------------------------------------------------
