@@ -346,6 +346,8 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
     {
         try
         {
+            // Released before endedAt is written, so a status that shows the end never shows the lock still held;
+            // for that short gap the lock is gone while the run still counts as going (the process has exited).
             run.Touch?.Dispose();
             updateLock.Release();
             DateTimeOffset now = time.GetUtcNow();
