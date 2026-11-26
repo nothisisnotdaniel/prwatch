@@ -77,10 +77,17 @@ public sealed class RunnerTests
         Assert.False(Directory.Exists(prs));
     }
 
-    [Fact]
-    public async Task Start_WithAReaderThatReturnsNothing_PassesNoHomeOrUser_AndTheTempPathAsTmpdir()
+    [Theory]
+    [InlineData("HOME", "")]
+    [InlineData("HOME", null)]
+    [InlineData("USER", "")]
+    [InlineData("USER", null)]
+    [InlineData("TMPDIR", "")]
+    [InlineData("TMPDIR", null)]
+    public async Task Start_WithAReaderThatReturnsNothing_PassesNoHomeOrUser_AndTheTempPathAsTmpdir(string underTest, string? emptyValue)
     {
-        using Rig rig = new(readVariable: name => name == "USER" ? null : "");
+        string? otherValue = emptyValue == null ? "" : null;
+        using Rig rig = new(readVariable: name => name == underTest ? emptyValue : otherValue);
         FakeClaude.SetStream(rig.Claude, Result());
 
         Assert.True(rig.Runner.TryStart(Alpha1));
