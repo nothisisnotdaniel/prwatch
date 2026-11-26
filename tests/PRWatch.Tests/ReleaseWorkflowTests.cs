@@ -307,6 +307,27 @@ public sealed class ReleaseWorkflowTests : IDisposable
     }
 
     [Fact]
+    public void Pack_WithASymlinkedUpdater_Fails()
+    {
+        string pack = RunScript(Step(Job(Workflow(), "macos"), "Pack"));
+        string temp = Path.Combine(folder, "runner");
+        string work = Path.Combine(folder, "work");
+        Directory.CreateDirectory(Path.Combine(temp, "publish", "wwwroot"));
+        File.WriteAllText(Path.Combine(temp, "publish", "wwwroot", "index.html"), "<!doctype html>\n");
+        Directory.CreateDirectory(Path.Combine(work, "scripts"));
+        string real = Path.Combine(folder, "elsewhere.sh");
+        File.WriteAllText(real, "#!/bin/sh\n");
+        File.CreateSymbolicLink(Path.Combine(work, "scripts", "updater.sh"), real);
+        Dictionary<string, string> env = new() { ["RELEASE_VERSION"] = "0.1.0", ["RUNNER_TEMP"] = temp };
+
+        (int code, _, string error) = Run(["/bin/bash", "-e", WriteScript(pack)], "", env, work);
+
+        Assert.Equal(1, code);
+        Assert.Contains("scripts/updater.sh is a symlink", error, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(work, "dist", "prwatch-0.1.0-osx-arm64.tar.gz")));
+    }
+
+    [Fact]
     public void Release_ChecksThenSumsThenAttestsThenCreates()
     {
         string release = Job(Workflow(), "release");
