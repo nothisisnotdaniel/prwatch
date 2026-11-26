@@ -49,3 +49,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#42](backlog/042-keep-the-login-state-after-an.md) Keep the login state after an error run that had an auth result
 - [ ] [#43](backlog/043-wait-for-the-run-timeout-timer.md) Wait for the run timeout timer in the AC-2 runner test
 - [ ] [#44](backlog/044-guard-the-lock-release-in-the.md) Guard the lock release in the runner's abandon path
+- [?] [#45](backlog/045-check-the-mode-of-an-existing.md) Check the mode of an existing prs/ or PR folder before writing a request
