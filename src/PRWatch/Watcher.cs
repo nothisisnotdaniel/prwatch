@@ -5,8 +5,9 @@ namespace PRWatch;
 /// <summary>The watcher: while <c>enabled</c> is on it polls once at start and then every <c>pollMinutes</c> (read
 /// fresh each time, on the container's <see cref="TimeProvider"/>), and at once when <c>enabled</c> is turned on.
 /// Each poll (<see cref="PollOnceAsync"/>) stores the valid open PRs and the skipped projects of the allowed
-/// projects (<see cref="AllowedProjects"/>: <c>factory</c> is an ordinary choice there) in the status and hands at most one PR that needs a review to the <see cref="IReviewRunner"/>. The factory root is only read
-/// here: <c>job.py pr poll</c> and the <c>factory/jobs/*/state.json</c> files.</summary>
+/// projects (<see cref="AllowedProjects"/>: <c>factory</c> is an ordinary choice there) in the status and hands
+/// at most one PR that needs a review to the <see cref="IReviewRunner"/>. The factory root is only read here:
+/// <c>job.py pr poll</c> and the <c>factory/jobs/*/state.json</c> files.</summary>
 internal sealed class Watcher : BackgroundService
 {
     public const long MaxStateBytes = 64 * 1024;
