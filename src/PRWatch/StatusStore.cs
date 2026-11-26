@@ -165,6 +165,7 @@ internal sealed class StatusStore
             && status.Brake is not null
             && status.Login is not null
             && LoginStatus.LoginStates.Contains(status.Login.State, StringComparer.Ordinal)
+            && (status.UpdateLock is null || UpdateLock.Holders.Contains(status.UpdateLock, StringComparer.Ordinal))
             && (status.LastError is null || status.LastError.Code is not null);
     }
 }

@@ -8,7 +8,7 @@ namespace PRWatch;
 
 /// <summary>PRWatch's current state (<c>status.json</c> in the data folder): the last poll, the last run per PR
 /// (keyed <c>&lt;repo&gt;-&lt;n&gt;</c>), the open PRs of the last poll, the skipped projects, the last pick, the
-/// brake, the Claude login and the last error.</summary>
+/// brake, the Claude login, who holds the update lock and the last error.</summary>
 internal sealed record Status
 {
     public DateTimeOffset? LastPoll { get; init; }
@@ -28,6 +28,10 @@ internal sealed record Status
 
     /// <summary>The plan usage of the last <c>rate_limit_event</c> of a run, or <c>null</c> before the first.</summary>
     public PlanUsage? PlanUsage { get; init; }
+
+    /// <summary>Who holds <c>.update.lock</c> (<see cref="PRWatch.UpdateLock.Holder"/>): <c>null</c>,
+    /// <c>run</c> or <c>updater</c>.</summary>
+    public string? UpdateLock { get; init; }
 
     public StatusError? LastError { get; init; }
 

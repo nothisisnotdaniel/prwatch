@@ -31,8 +31,11 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   `tailscale serve` (`--TailnetHost`). Never listen on `0.0.0.0` or a LAN address.
 - **Safety rules** (reviewers enforce these; a change to any of them is high risk):
   - **What PRWatch writes:** only its own files in `~/Library/Application Support/PRWatch/` (settings, status,
-    usage ledger, logs) and the request files `factory/prs/<repo>-<n>/request.json` (atomic write: temp file in the
-    same folder, then rename; never through a symlink). It never writes job records, backlogs, reviews, comments
+    usage ledger, logs, and the update lock `.update.lock/prwatch-run` for the whole of every `claude` run: a
+    folder made with libc `mkdir`, touched every 10 min, deleted only while it holds PRWatch's marker and never
+    through a symlink; a lock without the marker is the updater's and is never changed) and the request files
+    `factory/prs/<repo>-<n>/request.json` (atomic write: temp file in the same folder, then rename; never through a
+    symlink). It never writes job records, backlogs, reviews, comments
     or any file in a project repo or the factory root.
   - **Processes:** PRWatch runs exactly two programs, each with a fixed `ProcessStartInfo.ArgumentList`, never
     through a shell, never with an argument taken from a request except a PR number (digits only, checked) and a
@@ -77,7 +80,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     `nuget.config` (the RoomKit feed).
   - `src/PRWatch/`: `Program.cs`, `PrWatchApp` (options and routes), the watcher, the `claude` runner, the brake
     (`TokenBrake`, `UsageLedger`), the request writer, the taps of a PR (`PrActions`, served by `GET /api/prs`),
-    settings and status; `wwwroot/` (`index.html`, `room.js`, `app.js`, `prwatch.css`, icons, manifest).
+    settings and status, the update lock (`UpdateLock`, shown as `updateLock` in `/api/status`); `wwwroot/`
+    (`index.html`, `room.js`, `app.js`, `prwatch.css`, icons, manifest).
   - `tests/PRWatch.Tests/`: xUnit tests with a temporary factory root and fake `job.py` / `claude` scripts.
     `FakeJobPy` writes a `job.py` that prints `poll-output.json` (exit `poll-exit`, pause `poll-sleep`) and logs its
     argv, cwd and environment to a calls file outside the root; `WatcherRig` builds a watcher on its stores and a
@@ -88,8 +92,10 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     `exit-code`. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
     `RunTimeoutSeconds` (default 3600).
   - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`).
-  - `scripts/launch-agent.sh`, `scripts/updater.sh`: RoomKit's copies; change only the block between
-    `# roomkit:app-begin` and `# roomkit:app-end`.
+  - `scripts/launch-agent.sh`, `scripts/updater.sh` (0755): RoomKit's copies of the pinned package; change only
+    the block between `# roomkit:app-begin` and `# roomkit:app-end` (`ScriptTests` pins both). Install at login
+    with auto-update, from `PRWatch/`: `scripts/launch-agent.sh install --release [--tailnet-host <host>]`. The
+    updater ends `busy` while a review run holds `.update.lock`.
   - `.github/workflows/`: CI on every push and PR, release on a merged `release vX.Y.Z` PR into `main`.
 - **Style:** C# like ControlRoom: file-scoped namespaces, `internal sealed` unless a type must be public, no
   primary constructors, no `var`, braces on every body, camelCase private fields without `_`; 0 warnings. The web
