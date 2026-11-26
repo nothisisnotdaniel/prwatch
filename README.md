@@ -34,7 +34,10 @@ nuget.org. GitHub Packages needs a sign-in even to read, so set it up once on ea
    that runs as you, including `/factory pr` test runs of untrusted PR code, so the keychain is the safer choice.
 3. Run `scripts/restore.sh` once, before `dotnet build` or `dotnet test`, and again after a RoomKit version bump.
    It sets `NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>` for that one `dotnet restore`
-   only. After that, build and test take RoomKit from `~/.nuget/packages` and need no token.
+   only. After that, build and test take RoomKit from `~/.nuget/packages` and need no token. After a successful
+   restore it checks the SHA-256 of the restored `roomkit.<v>.nupkg` against `roomkit.sha256` (not the attestation,
+   which stays in CI); a missing or different package is removed from the NuGet packages folder and the script
+   exits 4, so no build uses it.
 
 Never export the PAT globally (for example `export NuGetPackageSourceCredentials_github=...` in `~/.zprofile`):
 every process started from that shell would inherit it, including the factory's `/factory pr` test runs of

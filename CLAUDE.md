@@ -111,7 +111,9 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`);
     a failure after its process started (before the monitor runs) kills the run with its tree, releases the lock and
     records `run_failed` (test-only hooks `AfterProcessStart` and `StatusStore.BeforeSave`).
-  - `scripts/restore.sh` (0755, PRWatch's own): the local restore with the PAT scoped to it (`RestoreScriptTests`).
+  - `scripts/restore.sh` (0755, PRWatch's own): the local restore with the PAT scoped to it (`RestoreScriptTests`);
+    after a successful restore it checks `roomkit.<v>.nupkg` against `roomkit.sha256` (no attestation) and on a
+    missing or different package removes `roomkit/<v>` from the NuGet packages folder and exits 4.
   - `scripts/launch-agent.sh`, `scripts/updater.sh` (0755): RoomKit's copies of the pinned package; change only
     the block between `# roomkit:app-begin` and `# roomkit:app-end` (`ScriptTests` pins both). Install at login
     with auto-update, from `PRWatch/`: `scripts/launch-agent.sh install --release [--tailnet-host <host>]`. The

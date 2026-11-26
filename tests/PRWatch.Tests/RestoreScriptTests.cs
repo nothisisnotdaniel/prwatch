@@ -1,16 +1,24 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 
 namespace PRWatch.Tests;
 
 /// <summary>Runs <c>scripts/restore.sh</c> (a copy in its own temp repo folder) with <c>/bin/sh</c>, a temp
 /// <c>HOME</c> and fake <c>security</c> and <c>dotnet</c> first on its <c>PATH</c>: the GitHub Packages token reaches
 /// only the one <c>dotnet restore</c>, from the keychain or a private 0600 file, and is never printed. macOS only (the
-/// script reads the keychain and uses BSD <c>stat</c>).</summary>
+/// script reads the keychain and uses BSD <c>stat</c>). After a successful restore the script checks the restored
+/// RoomKit package against <c>roomkit.sha256</c>; the fake <c>dotnet</c> "restores" the bytes of
+/// <c>package-bytes</c> (when present) into the NuGet packages folder.</summary>
 public sealed class RestoreScriptTests : IDisposable
 {
     private const string User = "octo-user";
     private const string Token = "ghp_Secret123";
+    private const string Version = "0.1.0";
+    private const string MismatchLine = "RoomKit.0.1.0.nupkg does not match roomkit.sha256; removed it from the NuGet packages folder.";
+    private const string MissingLine = "RoomKit.0.1.0.nupkg is not in the restored packages.";
+    private const string NoPinLine = "No pinned RoomKit version in src/PRWatch/PRWatch.csproj.";
+    private static readonly byte[] PackageBytes = "roomkit package bytes"u8.ToArray();
     private static readonly TimeSpan ProcessLimit = TimeSpan.FromSeconds(10);
 
     private const UnixFileMode Executable = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
@@ -24,6 +32,7 @@ public sealed class RestoreScriptTests : IDisposable
     private readonly string securityLog;
     private readonly string keychain;
     private readonly string tokenFile;
+    private readonly string packageBytes;
 
     public RestoreScriptTests()
     {
@@ -34,6 +43,7 @@ public sealed class RestoreScriptTests : IDisposable
         securityLog = Path.Combine(folder, "security-calls");
         keychain = Path.Combine(folder, "keychain");
         tokenFile = Path.Combine(home, "Library", "Application Support", "PRWatch", "github-packages");
+        packageBytes = Path.Combine(folder, "package-bytes");
         Directory.CreateDirectory(Path.Combine(repo, "scripts"));
         Directory.CreateDirectory(Path.GetDirectoryName(tokenFile)!);
         Directory.CreateDirectory(bin);
@@ -41,11 +51,20 @@ public sealed class RestoreScriptTests : IDisposable
         File.Copy(RepoFiles.PathOf("scripts/restore.sh"), Path.Combine(repo, "scripts", "restore.sh"));
         File.WriteAllText(Path.Combine(repo, "restore-marker"), "");
         File.WriteAllText(Path.Combine(folder, "dotnet-exit"), "0\n");
+        Directory.CreateDirectory(Path.Combine(repo, "src", "PRWatch"));
+        WriteCsproj("    <PackageReference Include=\"RoomKit\" Version=\"[" + Version + "]\" />\n");
+        File.WriteAllText(Path.Combine(repo, "roomkit.sha256"), HashOf(PackageBytes) + "  RoomKit." + Version + ".nupkg\n");
+        File.WriteAllBytes(packageBytes, PackageBytes);
         WriteFake(
             "dotnet",
             "{ printf 'argv:'; printf ' %s' \"$@\"; printf '\\n'; if [ -f restore-marker ]; then echo 'cwd: repo root'; else echo 'cwd: elsewhere'; fi;" +
             " printf 'cred: %s\\n' \"${NuGetPackageSourceCredentials_github:-<unset>}\"; } >> '" + dotnetLog + "'\n" +
-            "exit \"$(cat '" + Path.Combine(folder, "dotnet-exit") + "')\"\n");
+            "code=$(cat '" + Path.Combine(folder, "dotnet-exit") + "')\n" +
+            "if [ \"$code\" = 0 ] && [ -f '" + packageBytes + "' ]; then\n" +
+            "  dir=\"${NUGET_PACKAGES:-$HOME/.nuget/packages}/roomkit/" + Version + "\"\n" +
+            "  mkdir -p \"$dir\" && cp '" + packageBytes + "' \"$dir/roomkit." + Version + ".nupkg\"\n" +
+            "fi\n" +
+            "exit \"$code\"\n");
         WriteFake(
             "security",
             "printf '%s\\n' \"$*\" >> '" + securityLog + "'\n" +
@@ -250,6 +269,255 @@ public sealed class RestoreScriptTests : IDisposable
         Assert.True(code == 0, stderr);
         Assert.Contains("remove it from your shell profile", stderr, StringComparison.Ordinal);
         Assert.Contains("cred: Username=" + User + ";Password=" + Token, File.ReadAllLines(dotnetLog));
+    }
+
+    [Fact]
+    public void MatchingPackage_PassesTheCheck()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.True(code == 0, stderr);
+        Assert.Equal(PackageBytes, File.ReadAllBytes(PackageIn(DefaultPackages)));
+        Assert.DoesNotContain("does not match", stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DifferentBytes_FailWith4_AndRemoveOnlyThatVersionFolder()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        File.WriteAllBytes(packageBytes, "tampered bytes"u8.ToArray());
+        string sibling = Path.Combine(DefaultPackages, "roomkit", "9.9.9");
+        Directory.CreateDirectory(sibling);
+        File.WriteAllText(Path.Combine(sibling, "roomkit.9.9.9.nupkg"), "other");
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.Equal(4, code);
+        Assert.Contains(MismatchLine, stderr, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(DefaultPackages, "roomkit", Version)));
+        Assert.Equal("other", File.ReadAllText(Path.Combine(sibling, "roomkit.9.9.9.nupkg")));
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("other-version")]
+    [InlineData("missing")]
+    [InlineData("two-lines")]
+    [InlineData("one-field")]
+    public void BadHashFile_FailsWith4_AndRemovesTheVersionFolder(string scene)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        string hashFile = Path.Combine(repo, "roomkit.sha256");
+        string hash = HashOf(PackageBytes);
+        switch (scene)
+        {
+            case "other-version":
+                File.WriteAllText(hashFile, hash + "  RoomKit.0.2.0.nupkg\n");
+                break;
+            case "missing":
+                File.Delete(hashFile);
+                break;
+            case "two-lines":
+                File.WriteAllText(hashFile, hash + "  RoomKit." + Version + ".nupkg\n" + hash + "  RoomKit." + Version + ".nupkg\n");
+                break;
+            default:
+                File.WriteAllText(hashFile, hash + "\n");
+                break;
+        }
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.Equal(4, code);
+        Assert.Contains(MismatchLine, stderr, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(DefaultPackages, "roomkit", Version)));
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoRestoredPackage_FailsWith4()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        File.Delete(packageBytes);
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.Equal(4, code);
+        Assert.Contains(MissingLine, stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("file")]
+    [InlineData("folder")]
+    public void SymlinkedPackage_FailsWith4_AndTheTargetIsNotTouched(string scene)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        File.Delete(packageBytes);
+        string outside = Path.Combine(folder, "outside");
+        Directory.CreateDirectory(outside);
+        string target = Path.Combine(outside, "roomkit." + Version + ".nupkg");
+        File.WriteAllBytes(target, PackageBytes);
+        string versionFolder = Path.Combine(DefaultPackages, "roomkit", Version);
+        string expectedLine = MissingLine;
+        if (scene == "file")
+        {
+            Directory.CreateDirectory(versionFolder);
+            File.CreateSymbolicLink(PackageIn(DefaultPackages), target);
+        }
+        else
+        {
+            File.WriteAllBytes(target, "tampered bytes"u8.ToArray());
+            Directory.CreateDirectory(Path.GetDirectoryName(versionFolder)!);
+            Directory.CreateSymbolicLink(versionFolder, outside);
+            expectedLine = MismatchLine;
+        }
+
+        byte[] before = File.ReadAllBytes(target);
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.Equal(4, code);
+        Assert.Contains(expectedLine, stderr, StringComparison.Ordinal);
+        Assert.False(Path.Exists(versionFolder));
+        Assert.Equal(before, File.ReadAllBytes(target));
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoPin_FailsWith4_AndDeletesNothing()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        WriteCsproj("    <PackageReference Include=\"RoomKit\" Version=\"" + Version + "\" />\n");
+        File.WriteAllBytes(packageBytes, "tampered bytes"u8.ToArray());
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.Equal(4, code);
+        Assert.Contains(NoPinLine, stderr, StringComparison.Ordinal);
+        Assert.True(File.Exists(PackageIn(DefaultPackages)));
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FailedRestore_PassesItsCode_WithoutTheCheck()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        File.WriteAllText(Path.Combine(folder, "dotnet-exit"), "3\n");
+        string versionFolder = Path.Combine(DefaultPackages, "roomkit", Version);
+        Directory.CreateDirectory(versionFolder);
+        File.WriteAllText(PackageIn(DefaultPackages), "tampered");
+
+        (int code, string stdout, string stderr) = RunScript([]);
+
+        Assert.Equal(3, code);
+        Assert.DoesNotContain("RoomKit", stderr, StringComparison.Ordinal);
+        Assert.Equal("tampered", File.ReadAllText(PackageIn(DefaultPackages)));
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void NuGetPackagesVariable_IsWhereTheCheckReadsAndDeletes(bool matching)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        WriteKeychain(User, Token);
+        if (!matching)
+        {
+            File.WriteAllBytes(packageBytes, "tampered bytes"u8.ToArray());
+        }
+
+        string packages = Path.Combine(folder, "nuget-packages");
+        string homeFolder = Path.Combine(DefaultPackages, "roomkit", Version);
+        Directory.CreateDirectory(homeFolder);
+        File.WriteAllBytes(PackageIn(DefaultPackages), "tampered bytes"u8.ToArray());
+
+        (int code, string stdout, string stderr) = RunScript([], new() { ["NUGET_PACKAGES"] = packages });
+
+        Assert.True(File.Exists(PackageIn(DefaultPackages)));
+        if (matching)
+        {
+            Assert.True(code == 0, stderr);
+            Assert.Equal(PackageBytes, File.ReadAllBytes(PackageIn(packages)));
+        }
+        else
+        {
+            Assert.Equal(4, code);
+            Assert.Contains(MismatchLine, stderr, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(Path.Combine(packages, "roomkit", Version)));
+        }
+
+        Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Script_HeaderDescribesTheCheck()
+    {
+        string[] header = RepoFiles.Read("scripts/restore.sh").Split('\n').TakeWhile(line => line.StartsWith('#')).ToArray();
+
+        Assert.Contains(header, line => line.Contains("roomkit.sha256", StringComparison.Ordinal));
+        Assert.Contains(header, line => line.Contains("4 the RoomKit check failed", StringComparison.Ordinal));
+    }
+
+    private string DefaultPackages => Path.Combine(home, ".nuget", "packages");
+
+    private static string PackageIn(string packages)
+    {
+        return Path.Combine(packages, "roomkit", Version, "roomkit." + Version + ".nupkg");
+    }
+
+    private static string HashOf(byte[] bytes)
+    {
+        return Convert.ToHexStringLower(SHA256.HashData(bytes));
+    }
+
+    private void WriteCsproj(string reference)
+    {
+        File.WriteAllText(
+            Path.Combine(repo, "src", "PRWatch", "PRWatch.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n" + reference + "  </ItemGroup>\n</Project>\n");
     }
 
     private void WriteKeychain(string user, string token)
