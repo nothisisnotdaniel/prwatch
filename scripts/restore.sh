@@ -8,8 +8,8 @@
 #   1. the login keychain: a generic password with service SERVICE below, account <GitHub user>, password <token>
 #      (security add-generic-password -s prwatch-github-packages -a <user> -T '' -w: with -T '' no program may read
 #      it without asking, so every run shows a keychain prompt; choose "Allow", not "Always Allow"), or
-#   2. the file ~/Library/Application Support/PRWatch/github-packages: one line <user>:<token>, a regular file (not
-#      a symlink) of this user with mode 0600.
+#   2. the file ~/Library/Application Support/PRWatch/github-packages: exactly one line <user>:<token> (a trailing
+#      newline is optional), a regular file (not a symlink) of this user with mode 0600.
 # A token in the 0600 file can still be read by any code that runs as you, including /factory pr test runs of
 # untrusted PR code; the keychain item with -T '' is the safer choice.
 # The user must be 1-39 of A-Z a-z 0-9 -, the token 1-255 of A-Z a-z 0-9 _, so neither can change the credential
@@ -55,7 +55,8 @@ elif [ -e "$TOKEN_FILE" ] || [ -L "$TOKEN_FILE" ]; then
         exit 2
     fi
     line=$(sed -n '1p' "$TOKEN_FILE")
-    if [ "$(wc -l < "$TOKEN_FILE" | tr -d ' ')" -gt 1 ]; then
+    # sed -n '$=' counts a last line without a trailing newline too and prints nothing for an empty file.
+    if [ "$(sed -n '$=' "$TOKEN_FILE")" != 1 ]; then
         echo "The token file must hold exactly one line <user>:<token>." >&2
         exit 2
     fi
