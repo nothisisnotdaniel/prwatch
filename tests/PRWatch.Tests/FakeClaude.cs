@@ -8,10 +8,11 @@ namespace PRWatch.Tests;
 /// <c>python3</c> on <see cref="PollRunner.FixedPath"/> in its shebang) in a folder of the test's own, never on the
 /// real <c>PATH</c>. Run, it appends one JSON line (its argv, cwd, full environment, pid and what it read from
 /// stdin) to a calls file outside the factory root (before that, as soon as it runs, it writes its pid to
-/// <c>started-pid</c> next to the script, atomically, so a test can see a process that has not read stdin yet), writes <c>stderr.txt</c> to stderr, prints
-/// <c>stream.jsonl</c> line by line and exits with the code in <c>exit-code</c> (0 without it). Those files sit next
-/// to the script. In the stream, the line <c>#wait</c> blocks until a <c>release</c> file appears next to the
-/// script (at most 120 s), and <c>#flood</c> prints junk lines until the process is killed.</summary>
+/// <c>started-pid</c> next to the script, atomically, so a test can see a process that has not read stdin yet),
+/// writes <c>stderr.txt</c> to stderr, prints <c>stream.jsonl</c> line by line and exits with the code in
+/// <c>exit-code</c> (0 without it). Those files sit next to the script. In the stream, the line <c>#wait</c> blocks
+/// until a <c>release</c> file appears next to the script (at most 120 s), and <c>#flood</c> prints junk lines until
+/// the process is killed.</summary>
 internal static class FakeClaude
 {
     private const UnixFileMode Private = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
@@ -99,8 +100,8 @@ internal static class FakeClaude
     public static int? StartedPid(string claude)
     {
         string file = Next(claude, "started-pid");
-        return File.Exists(file) && int.TryParse(File.ReadAllText(file), NumberStyles.None, CultureInfo.InvariantCulture,
-            out int pid)
+        return File.Exists(file)
+            && int.TryParse(File.ReadAllText(file), NumberStyles.None, CultureInfo.InvariantCulture, out int pid)
                 ? pid
                 : null;
     }
