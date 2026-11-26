@@ -9,9 +9,11 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   web app (Mac browser and iPhone home-screen PWA) with the Consent and Merge taps for untrusted authors. It
   starts at login. It is the **only** program in the factory allowed to start `claude` on its own, and only for
   `/factory pr` reviews (the user's rule of 22 Nov 2026): never add any other kind of run, schedule or job.
-- **Stack:** .NET 10 ASP.NET Core minimal API on the **RoomKit core only** (the `RoomKit` NuGet package from
-  ControlRoom's releases, restored from the local feed `~/Library/Application Support/RoomKit/feed` named in
-  `nuget.config`; see `ControlRoom/docs/roomkit.md`). No `FactoryModule`, no `IJobFormat`: `Program.cs` is
+- **Stack:** .NET 10 ASP.NET Core minimal API on the **RoomKit core only** (the `RoomKit` NuGet package from the
+  `nothisisnotdaniel/roomkit` repo, restored from GitHub Packages, source `github` =
+  `https://nuget.pkg.github.com/nothisisnotdaniel/index.json` in `nuget.config`, which maps only `RoomKit` there and
+  everything else to nuget.org; docs: `https://github.com/nothisisnotdaniel/roomkit/blob/main/docs/roomkit.md`).
+  No `FactoryModule`, no `IJobFormat`: `Program.cs` is
   `return RoomKitApp.Run(args, PrWatchApp.Options, PrWatchApp.Map, addServices: PrWatchApp.AddServices);`.
   Plain HTML/CSS/JS in `wwwroot` (no CDN, no build step, strict CSP), xUnit tests with `Microsoft.AspNetCore.Mvc.Testing`. No other package without a reason
   in the spec.
@@ -23,11 +25,17 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   they build a temporary factory root with a fake `factory/tools/job.py` and a fake `claude` script on a test
   `PATH`, and host the app in memory. The in-memory harness is `tests/PRWatch.Tests/PrWatchFactory.cs` (own temp
   folder, `--TokenFile=<temp>/PRWatch/access-token`, `--environment=Production`, `Host: 127.0.0.1:8101`).
-  Before the first build on a Mac, fill the feed once with the `gh release download` command from
-  `ControlRoom/docs/roomkit.md` for the version pinned in `src/PRWatch/PRWatch.csproj` (`Version="[x.y.z]"`; CI
-  reads it there and checks the package against the release's `SHA256SUMS`, the pin in `roomkit.sha256` and
-  ControlRoom's build-provenance attestation from `release.yml` on `refs/heads/main`; a RoomKit version bump updates
-  `roomkit.sha256` in the same commit as the csproj).
+  Before the first `dotnet build` or `dotnet test` on a Mac (and after a RoomKit version bump), run
+  `scripts/restore.sh` once (README "RoomKit"). It reads a classic PAT with only `read:packages` from the keychain
+  (service `prwatch-github-packages`) or from `~/Library/Application Support/PRWatch/github-packages` (0600) and sets
+  `NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>` for that one `dotnet restore` only. The PAT
+  is never committed (no `packageSourceCredentials` in `nuget.config`) and never exported globally: a shell
+  profile export would hand it to every process, including `/factory pr` test runs of untrusted PR code. CI uses
+  `GITHUB_TOKEN` only on the `Restore` steps (jobs with just `contents: read` and `packages: read`); the next step,
+  "Check the RoomKit package", reads the version pinned in `src/PRWatch/PRWatch.csproj` (`Version="[x.y.z]"`), checks the restored
+  `roomkit.<v>.nupkg` against `roomkit.sha256` and its build-provenance attestation from roomkit's `release.yml` on
+  `refs/heads/main` (a merged pull request, GitHub-hosted runner) before any build. A RoomKit version bump changes the
+  csproj and `roomkit.sha256` in the same commit.
 - **Access:** as RoomKit gives it: loopback only (`127.0.0.1:8101`), `HostCheck`, the bearer token on every
   `/api/` path (token in `~/Library/Application Support/PRWatch/access-token`), reached from the iPhone through
   `tailscale serve` (`--TailnetHost`). Never listen on `0.0.0.0` or a LAN address.
@@ -79,7 +87,7 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   loop; warn 7 days before `credential_expires_at`.
 - **Layout:**
   - `PRWatch.slnx`, `Directory.Build.props` (nullable, implicit usings, code style in build), `.editorconfig`,
-    `nuget.config` (the RoomKit feed).
+    `nuget.config` (RoomKit from GitHub Packages), `roomkit.sha256` (the pinned package's SHA-256), `README.md`.
   - `src/PRWatch/`: `Program.cs`, `PrWatchApp` (options and routes), the watcher, the `claude` runner, the brake
     (`TokenBrake`, `UsageLedger`), the request writer, the taps of a PR (`PrActions`, served by `GET /api/prs`),
     settings and status, the update lock (`UpdateLock`, shown as `updateLock` in `/api/status`); `wwwroot/`
@@ -94,6 +102,7 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     `exit-code`. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
     `RunTimeoutSeconds` (default 3600).
   - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`).
+  - `scripts/restore.sh` (0755, PRWatch's own): the local restore with the PAT scoped to it (`RestoreScriptTests`).
   - `scripts/launch-agent.sh`, `scripts/updater.sh` (0755): RoomKit's copies of the pinned package; change only
     the block between `# roomkit:app-begin` and `# roomkit:app-end` (`ScriptTests` pins both). Install at login
     with auto-update, from `PRWatch/`: `scripts/launch-agent.sh install --release [--tailnet-host <host>]`. The

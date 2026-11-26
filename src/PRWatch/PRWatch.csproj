@@ -21,8 +21,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Exactly this version, from the RoomKit folder feed only (nuget.config). CI reads it from this line. -->
-    <PackageReference Include="RoomKit" Version="[0.3.0]" />
+    <!-- Exactly this version, from GitHub Packages only (nuget.config). CI reads it from this line. -->
+    <PackageReference Include="RoomKit" Version="[0.1.0]" />
   </ItemGroup>
 
   <ItemGroup>
