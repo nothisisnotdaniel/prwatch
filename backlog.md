@@ -44,3 +44,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#37](backlog/037-check-the-roomkit-package-hash-in.md) Check the RoomKit package hash in restore.sh
 - [ ] [#38](backlog/038-count-lines-exactly-in-restore-sh.md) Count lines exactly in restore.sh's token file check
 - [?] [#39](backlog/039-test-the-factory-pr-filter-with.md) Test the factory PR filter with an empty projects list
+- [?] [#40](backlog/040-skip-the-poll-tree-kill-after.md) Skip the poll tree kill after the process has exited
