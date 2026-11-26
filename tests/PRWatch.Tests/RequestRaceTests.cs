@@ -76,6 +76,20 @@ public sealed class RequestRaceTests
     }
 
     [Fact]
+    public async Task PollStartedBeforeTheWrite_PrGone_IsNotListedAgain()
+    {
+        using Rig rig = await Rig.Start();
+        JsonArray prs = [WatcherRig.Pr("Alpha", 8, Sha, trusted: false)];
+        FakeJobPy.SetOutput(rig.Root, new JsonObject { ["prs"] = prs, ["skipped"] = new JsonArray() }.ToJsonString());
+
+        await rig.HeldPoll(async () => await rig.PostOk("merge", 7));
+
+        Assert.False(await rig.Lists("/api/status", 7));
+        Assert.False(await rig.Lists("/api/prs", 7));
+        Assert.Null(await rig.StatusRequest(8));
+    }
+
+    [Fact]
     public async Task TwoTapsDuringOneHeldPoll_TheLatestWins()
     {
         using Rig rig = await Rig.Start();
@@ -175,6 +189,14 @@ public sealed class RequestRaceTests
         public async Task<string?> PrsRequest(int number)
         {
             return (await Find("/api/prs", number)).GetProperty("request").GetString();
+        }
+
+        public async Task<bool> Lists(string route, int number)
+        {
+            using JsonDocument document = JsonDocument.Parse(await Client.GetStringAsync(route));
+            return document.RootElement.GetProperty("prs").EnumerateArray()
+                .Any(pr => pr.GetProperty("project").GetString() == "Alpha"
+                    && pr.GetProperty("number").GetInt32() == number);
         }
 
         public void Dispose()

@@ -60,7 +60,8 @@ internal sealed class Watcher : BackgroundService
     /// <summary>Polls once, stores the PRs, the skipped projects, the token brake (<see cref="TokenBrake.Evaluate"/>
     /// on the plan usage and the usage ledger, before the pick), the pick and <c>login.expiresSoon</c>, and hands
     /// the pick to the runner (which writes the run's start).
-    /// A failed poll records its code and keeps <c>prs</c> and <c>lastPoll</c>; nothing is picked then.</summary>
+    /// A failed poll records its code and keeps <c>prs</c> and <c>lastPoll</c>; nothing is picked then, and the
+    /// noted requests (<see cref="NoteRequest"/>) stay until the next successful poll drops them.</summary>
     public async Task PollOnceAsync(CancellationToken cancellationToken)
     {
         Settings current = settings.Current;
