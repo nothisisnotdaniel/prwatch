@@ -23,7 +23,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#14](backlog/014-decide-whether-the-projects-setting-filters.md) Decide whether the projects setting filters factory PRs (after: #3)
 - [ ] [#15](backlog/015-report-a-clean-exit-that-races.md) Report a clean exit that races the poll timeout as success
 - [ ] [#16](backlog/016-stop-a-test-from-changing-process.md) Stop a test from changing process-wide environment variables
-- [?] [#17](backlog/017-set-needs-login-only-for-auth.md) Set needs_login only for auth failures, not for timeouts
+- [ ] [#17](backlog/017-set-needs-login-only-for-auth.md) Set needs_login only for auth failures, not for timeouts
 - [?] [#18](backlog/018-kill-the-claude-process-when-the.md) Kill the claude process when the status update fails after start
 - [?] [#19](backlog/019-stop-the-output-reads-when-a.md) Stop the output reads when a run is killed
 - [?] [#20](backlog/020-close-the-time-of-check-time.md) Close the time-of-check/time-of-use gap when starting claude
