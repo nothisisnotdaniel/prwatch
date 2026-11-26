@@ -386,8 +386,14 @@ public sealed class ReleaseWorkflowTests : IDisposable
             StringComparison.Ordinal);
         Assert.Contains("*-*) PRERELEASE=\"--prerelease\" ;;", create, StringComparison.Ordinal);
         Assert.Equal(
-            ["Check out the release commit", "Collect the build artifact", "Check the downloaded files", "Checksums", "Attest build provenance", "Create GitHub release"],
+            ["Collect the build artifact", "Check the downloaded files", "Checksums", "Attest build provenance", "Create GitHub release"],
             StepNames(release));
+
+        // The write-scoped job has no checkout and runs no git; gh names the repository through GH_REPO.
+        Assert.DoesNotContain("actions/checkout@", release, StringComparison.Ordinal);
+        Assert.DoesNotContain("git ", release, StringComparison.Ordinal);
+        Assert.Contains("          GH_REPO: ${{ github.repository }}\n", create, StringComparison.Ordinal);
+        Assert.Contains("          GH_TOKEN: ${{ github.token }}\n", create, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -487,7 +493,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
         string[] uses = [.. workflow.Split('\n')
             .Where(line => line.TrimStart().StartsWith("uses:", StringComparison.Ordinal) ||
                 line.TrimStart().StartsWith("- uses:", StringComparison.Ordinal))];
-        Assert.Equal(9, uses.Length);
+        Assert.Equal(8, uses.Length);
         foreach (string line in uses)
         {
             Assert.Matches(@"uses: [\w.-]+/[\w.-]+@[0-9a-f]{40}( #.*)?$", line);
@@ -510,7 +516,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
         Assert.Equal(2, Count(workflow, "Password=${{ secrets.GITHUB_TOKEN }}\n"));
         Assert.DoesNotContain("pull_request_target", workflow, StringComparison.Ordinal);
         int checkouts = Count(workflow, "uses: actions/checkout@");
-        Assert.Equal(4, checkouts);
+        Assert.Equal(3, checkouts);
         Assert.Equal(checkouts, Count(workflow, "persist-credentials: false"));
     }
 
