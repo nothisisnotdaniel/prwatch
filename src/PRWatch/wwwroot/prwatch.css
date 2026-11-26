@@ -107,7 +107,8 @@ span.pr-link {
 
 .pr-meta,
 .pr-run,
-.pr-request {
+.pr-request,
+.pr-sent {
   color: var(--muted);
   font-size: 0.9rem;
 }

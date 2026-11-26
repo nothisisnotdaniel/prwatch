@@ -24,6 +24,7 @@ const MaxAuthor = 100;
 const ShortSha = 7;
 
 const Texts = {
+  sent: "Sent",
   loading: "Loading…",
   unreachable: "Can't reach PRWatch.",
   noPrs: "No open pull requests.",
@@ -357,6 +358,23 @@ function sendRequest(action, body) {
   return authFetch(ReviewRoute, options);
 }
 
+// The PR the user just tapped, until its row shows the "requested" line, a new head or is gone.
+let sent = null;
+
+function isSent(pr) {
+  return sent !== null && sent.project === pr.project && sent.number === pr.number && sent.headSha === pr.headSha;
+}
+
+function clearSentIfDone(prs) {
+  if (sent === null) {
+    return;
+  }
+  const match = prs.find(isSent);
+  if (!match || match.request) {
+    sent = null;
+  }
+}
+
 async function tap(action, pr) {
   showMessage("request-error", "");
   const body = { project: pr.project, number: pr.number, headSha: pr.headSha };
@@ -375,6 +393,8 @@ async function tap(action, pr) {
   if (!response.ok) {
     const error = await readJson(response);
     showMessage("request-error", textFor(RequestErrors, error && error.error, ErrorFallback));
+  } else {
+    sent = { project: pr.project, number: pr.number, headSha: pr.headSha };
   }
   await refresh();
 }
@@ -494,6 +514,8 @@ function prRow(pr) {
     row.append(element("p", "pr-request", RequestUnused));
   } else if (pr.request) {
     row.append(element("p", "pr-request", textFor(Requests, pr.request, Fallback)));
+  } else if (isSent(pr)) {
+    row.append(element("p", "pr-sent", Texts.sent));
   }
 
   const actions = Array.isArray(pr.actions) ? pr.actions : [];
@@ -515,6 +537,7 @@ function renderPrs(body) {
   const prs = (body && Array.isArray(body.prs) ? body.prs : [])
     .filter(pr => pr && typeof pr.project === "string" && Number.isInteger(pr.number)
       && typeof pr.headSha === "string" && Sha.test(pr.headSha));
+  clearSentIfDone(prs);
   if (prs.length === 0) {
     list.append(element("p", "empty", Texts.noPrs));
     return;
