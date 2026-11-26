@@ -8,7 +8,8 @@ namespace PRWatch.Tests;
 /// appends one JSON line (its argv, cwd, whether the cwd is the root, its environment, its pid and what it read from
 /// stdin) to a calls file outside the root (the path is baked into the script), writes a marker to stderr, sleeps
 /// for the seconds in <c>poll-sleep</c> if that file exists, prints <c>poll-output.json</c> and exits with the code
-/// in <c>poll-exit</c> (0 without it). Those files sit next to the script; the script itself writes nothing in the
+/// in <c>poll-exit</c> (0 without it). While a <c>poll-wait</c> file exists it first writes <c>poll-started</c> and
+/// blocks until a <c>poll-release</c> file exists. Those files sit next to the script; the script itself writes nothing in the
 /// root.</summary>
 internal static class FakeJobPy
 {
@@ -38,6 +39,10 @@ internal static class FakeJobPy
                     return None
                 with open(path, "rb") as f:
                     return f.read()
+            if os.path.exists(os.path.join(HERE, "poll-wait")):
+                open(os.path.join(HERE, "poll-started"), "w").close()
+                while not os.path.exists(os.path.join(HERE, "poll-release")):
+                    time.sleep(0.02)
             pause = read("poll-sleep")
             if pause is not None:
                 time.sleep(float(pause))
@@ -62,6 +67,31 @@ internal static class FakeJobPy
     public static void SetExit(string root, int code)
     {
         File.WriteAllText(Path.Combine(root, "factory", "tools", "poll-exit"), code.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Holds every later poll (after it writes <c>poll-started</c>) until <see cref="Release"/>.</summary>
+    public static void Hold(string root)
+    {
+        string tools = Path.Combine(root, "factory", "tools");
+        File.Delete(Path.Combine(tools, "poll-started"));
+        File.Delete(Path.Combine(tools, "poll-release"));
+        File.WriteAllText(Path.Combine(tools, "poll-wait"), "");
+    }
+
+    public static bool Started(string root)
+    {
+        return File.Exists(Path.Combine(root, "factory", "tools", "poll-started"));
+    }
+
+    public static void Release(string root)
+    {
+        File.WriteAllText(Path.Combine(root, "factory", "tools", "poll-release"), "");
+    }
+
+    /// <summary>Stops holding polls: later polls run straight through again.</summary>
+    public static void Unhold(string root)
+    {
+        File.Delete(Path.Combine(root, "factory", "tools", "poll-wait"));
     }
 
     public static void SetSleep(string root, int seconds)

@@ -29,6 +29,14 @@ internal sealed class Watcher : BackgroundService
 
     private readonly SemaphoreSlim wake = new(0, 1);
 
+    private readonly object notedGate = new();
+
+    /// <summary>The recent requests, at most one per PR (<c>&lt;repo&gt;-&lt;n&gt;</c>, latest wins), each with
+    /// its sequence number. Only in memory; every poll drops what it does not keep.</summary>
+    private readonly Dictionary<string, NotedRequest> noted = new(StringComparer.Ordinal);
+
+    private long notedSequence;
+
     private int pollNow;
 
     public Watcher(SettingsStore settings, StatusStore status, PollRunner poll, IReviewRunner runner,
@@ -63,6 +71,7 @@ internal sealed class Watcher : BackgroundService
             return;
         }
 
+        long pollStart = NotedSequence();
         using PollOutcome outcome = await poll.RunAsync(root, cancellationToken);
         if (outcome.Output is null)
         {
@@ -83,7 +92,7 @@ internal sealed class Watcher : BackgroundService
         ReviewPick? pick = null;
         status.Update(previous =>
         {
-            List<PrStatus> prs = ReadPrs(top.GetProperty("prs"), allowed, previous.Prs, now);
+            List<PrStatus> prs = ApplyNoted(ReadPrs(top.GetProperty("prs"), allowed, previous.Prs, now), pollStart);
             Status next = previous with
             {
                 LastPoll = now,
@@ -173,6 +182,20 @@ internal sealed class Watcher : BackgroundService
         return null;
     }
 
+    /// <summary>Notes a request just written by <c>POST /api/prs/&lt;action&gt;</c>, so that a poll that started
+    /// before it (and so may print no <c>request</c>) still shows it for the same head. One entry per PR, the
+    /// latest wins.</summary>
+    public void NoteRequest(PrRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        lock (notedGate)
+        {
+            notedSequence++;
+            noted[PrRules.RunKey(request.Project, request.Number)] =
+                new NotedRequest(request.Action, request.HeadSha, notedSequence);
+        }
+    }
+
     /// <summary>Wakes the loop for one poll at once (as turning <c>enabled</c> on does); the loop polls only while
     /// <c>enabled</c> is on.</summary>
     public void PollSoon()
@@ -227,6 +250,50 @@ internal sealed class Watcher : BackgroundService
             }
 
             await WaitAsync(deadline, stoppingToken);
+        }
+    }
+
+    private long NotedSequence()
+    {
+        lock (notedGate)
+        {
+            return notedSequence;
+        }
+    }
+
+    /// <summary>Sets the noted action on each PR of the poll whose request is newer than the poll's start and
+    /// names the same head; drops every noted request that is not newer than the start, or whose PR is gone or
+    /// has another head. A poll that started after a request was noted decides the value itself.</summary>
+    private List<PrStatus> ApplyNoted(List<PrStatus> prs, long pollStart)
+    {
+        lock (notedGate)
+        {
+            if (noted.Count == 0)
+            {
+                return prs;
+            }
+
+            Dictionary<string, PrStatus> listed = new(StringComparer.Ordinal);
+            foreach (PrStatus pr in prs)
+            {
+                listed.TryAdd(PrRules.RunKey(pr.Project, pr.Number), pr);
+            }
+
+            foreach ((string key, NotedRequest entry) in noted.ToList())
+            {
+                if (entry.Sequence <= pollStart
+                    || !listed.TryGetValue(key, out PrStatus? pr)
+                    || pr.HeadSha != entry.HeadSha)
+                {
+                    noted.Remove(key);
+                }
+            }
+
+            return [.. prs.Select(pr =>
+                noted.TryGetValue(PrRules.RunKey(pr.Project, pr.Number), out NotedRequest? entry)
+                    && entry.HeadSha == pr.HeadSha
+                    ? pr with { Request = entry.Action }
+                    : pr)];
         }
     }
 
@@ -530,3 +597,7 @@ internal sealed class Watcher : BackgroundService
         };
     }
 }
+
+/// <summary>A request noted by <see cref="Watcher.NoteRequest"/>: its action, the head it named and its sequence
+/// number.</summary>
+internal sealed record NotedRequest(string Action, string HeadSha, long Sequence);
