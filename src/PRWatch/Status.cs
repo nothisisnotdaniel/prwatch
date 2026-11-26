@@ -2,17 +2,25 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace PRWatch;
 
 /// <summary>PRWatch's current state (<c>status.json</c> in the data folder): the last poll, the last run per PR
-/// (keyed <c>&lt;repo&gt;-&lt;n&gt;</c>), the brake, the Claude login and the last error.</summary>
+/// (keyed <c>&lt;repo&gt;-&lt;n&gt;</c>), the open PRs of the last poll, the skipped projects, the last pick, the
+/// brake, the Claude login and the last error.</summary>
 internal sealed record Status
 {
     public DateTimeOffset? LastPoll { get; init; }
 
     public ImmutableSortedDictionary<string, RunStatus> Runs { get; init; } =
         ImmutableSortedDictionary.Create<string, RunStatus>(StringComparer.Ordinal);
+
+    public IReadOnlyList<PrStatus> Prs { get; init; } = [];
+
+    public IReadOnlyList<SkipStatus> Skipped { get; init; } = [];
+
+    public PickStatus? Pick { get; init; }
 
     public BrakeStatus Brake { get; init; } = new();
 
@@ -36,6 +44,77 @@ internal sealed record RunStatus
     public int? ExitCode { get; init; }
 
     public string? Result { get; init; }
+}
+
+/// <summary>One open PR as the last poll saw it. <see cref="Title"/>, <see cref="Author"/> and <see cref="Url"/>
+/// are untrusted text (capped; the URL only in its exact GitHub form). <see cref="HeadSeenAt"/> is when PRWatch
+/// first saw <see cref="HeadSha"/> on this PR.</summary>
+internal sealed record PrStatus
+{
+    public required string Project { get; init; }
+
+    public required int Number { get; init; }
+
+    public required string Title { get; init; }
+
+    public required string Author { get; init; }
+
+    public string? Url { get; init; }
+
+    public required string HeadSha { get; init; }
+
+    public required DateTimeOffset HeadSeenAt { get; init; }
+
+    public required bool Trusted { get; init; }
+
+    public string? Request { get; init; }
+
+    public RoundStatus? Round { get; init; }
+}
+
+/// <summary>A PR's latest review round: its number, the head it reviewed, whether that is the PR's head now and
+/// whether it came out clean.</summary>
+internal sealed record RoundStatus
+{
+    public required int K { get; init; }
+
+    public required string HeadSha { get; init; }
+
+    public required bool Current { get; init; }
+
+    public required bool Clean { get; init; }
+}
+
+/// <summary>A project the last poll could not read or the watcher leaves alone, with a fixed reason code.</summary>
+internal sealed record SkipStatus
+{
+    public const string GhMissing = "gh_missing";
+
+    public const string NoRemote = "no_remote";
+
+    public const string GhFailed = "gh_failed";
+
+    public const string Unknown = "unknown";
+
+    public const string JobActive = "job_active";
+
+    public static readonly string[] Reasons = [GhMissing, NoRemote, GhFailed, Unknown, JobActive];
+
+    public required string Project { get; init; }
+
+    public required string Reason { get; init; }
+}
+
+/// <summary>The PR the last poll picked for a review, and when.</summary>
+internal sealed record PickStatus
+{
+    public required string Project { get; init; }
+
+    public required int Number { get; init; }
+
+    public required string HeadSha { get; init; }
+
+    public required DateTimeOffset At { get; init; }
 }
 
 /// <summary>Whether the token brake holds, why and until when.</summary>
@@ -70,6 +149,17 @@ internal sealed record StatusError(string Code, DateTimeOffset At)
     public const string SettingsUnreadable = "settings_unreadable";
 
     public const string StatusWriteFailed = "status_write_failed";
+
+    public const string PythonMissing = "python_missing";
+
+    public const string PollTimeout = "poll_timeout";
+
+    public const string PollFailed = "poll_failed";
+
+    public const string PollOutputInvalid = "poll_output_invalid";
+
+    /// <summary>The codes a successful poll clears.</summary>
+    public static readonly string[] PollCodes = [PythonMissing, PollTimeout, PollFailed, PollOutputInvalid];
 }
 
 /// <summary>The JSON form of the status and settings: camelCase names, nulls written, times as UTC ISO-8601
@@ -114,4 +204,115 @@ internal static class PrWatchJson
             writer.WriteStringValue(value.UtcDateTime.ToString(Format, CultureInfo.InvariantCulture));
         }
     }
+}
+
+/// <summary>The checks on PR data from <c>job.py pr poll</c> and from <c>status.json</c>: names, numbers, shas,
+/// URLs, request actions, text caps and <c>runs</c> keys.</summary>
+internal static partial class PrRules
+{
+    public const int MaxNumber = 999_999_999;
+
+    public const int MaxTitle = 200;
+
+    public const int MaxAuthor = 100;
+
+    public const int MaxPrs = 500;
+
+    public static readonly string[] Requests = ["review", "merge", "cancel"];
+
+    /// <summary>A project name that can be the first part of a <c>runs</c> key.</summary>
+    public static bool IsProjectName(string? name)
+    {
+        return name is not null && ProjectPattern().IsMatch(name);
+    }
+
+    public static bool IsNumber(int number)
+    {
+        return number is >= 1 and <= MaxNumber;
+    }
+
+    /// <summary>40 lowercase hex characters.</summary>
+    public static bool IsSha(string? sha)
+    {
+        return sha is not null && ShaPattern().IsMatch(sha);
+    }
+
+    /// <summary><c>null</c> or one of <see cref="Requests"/>.</summary>
+    public static bool IsRequest(string? request)
+    {
+        return request is null || Requests.Contains(request, StringComparer.Ordinal);
+    }
+
+    /// <summary>True only for exactly <c>https://github.com/&lt;owner&gt;/&lt;repo&gt;/pull/&lt;number&gt;</c>.</summary>
+    public static bool IsPullUrl(string? url, int number)
+    {
+        if (url is null)
+        {
+            return false;
+        }
+
+        Match match = UrlPattern().Match(url);
+        return match.Success
+            && string.Equals(match.Groups["n"].Value, number.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    /// <summary>The key of a PR in <c>runs</c>: <c>&lt;project&gt;-&lt;number&gt;</c>.</summary>
+    public static string RunKey(string project, int number)
+    {
+        return project + "-" + number.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>True for a key <c>&lt;repo&gt;-&lt;n&gt;</c> with a plain repo name and n from 1 to 999999999.</summary>
+    public static bool IsRunKey(string key)
+    {
+        return RunKeyPattern().IsMatch(key);
+    }
+
+    /// <summary>The project part of a valid run key (everything before the last <c>-</c>).</summary>
+    public static string RunKeyProject(string key)
+    {
+        return key[..key.LastIndexOf('-')];
+    }
+
+    /// <summary>At most <paramref name="max"/> UTF-16 units, never ending in half a surrogate pair.</summary>
+    public static string Cap(string text, int max)
+    {
+        if (text.Length <= max)
+        {
+            return text;
+        }
+
+        int length = char.IsHighSurrogate(text[max - 1]) ? max - 1 : max;
+        return text[..length];
+    }
+
+    /// <summary>A stored PR that keeps every rule (used when <c>status.json</c> is loaded).</summary>
+    public static bool IsValid(PrStatus pr)
+    {
+        return IsProjectName(pr.Project)
+            && IsNumber(pr.Number)
+            && pr.Title is not null && pr.Title.Length <= MaxTitle
+            && pr.Author is not null && pr.Author.Length <= MaxAuthor
+            && (pr.Url is null || IsPullUrl(pr.Url, pr.Number))
+            && IsSha(pr.HeadSha)
+            && IsRequest(pr.Request)
+            && (pr.Round is null || IsSha(pr.Round.HeadSha));
+    }
+
+    [GeneratedRegex(@"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\z",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ProjectPattern();
+
+    [GeneratedRegex(@"\A[0-9a-f]{40}\z",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ShaPattern();
+
+    [GeneratedRegex(
+        @"\Ahttps://github\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}/pull/(?<n>[1-9][0-9]{0,8})\z",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex UrlPattern();
+
+    [GeneratedRegex(@"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}-[1-9][0-9]{0,8}\z",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex RunKeyPattern();
 }
