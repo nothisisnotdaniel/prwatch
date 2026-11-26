@@ -189,15 +189,13 @@ internal sealed class Watcher : BackgroundService
                 continue;
             }
 
-            TimeSpan? wait = current.Enabled && lastStart is not null
-                ? lastStart.Value + interval - time.GetUtcNow()
-                : null;
-            if (wait is { } due && due <= TimeSpan.Zero)
+            DateTimeOffset? deadline = current.Enabled && lastStart is not null ? lastStart.Value + interval : null;
+            if (deadline is { } due && due <= time.GetUtcNow())
             {
                 continue;
             }
 
-            await WaitAsync(wait, stoppingToken);
+            await WaitAsync(deadline, stoppingToken);
         }
     }
 
@@ -226,14 +224,21 @@ internal sealed class Watcher : BackgroundService
         }
     }
 
-    /// <summary>Waits for <paramref name="wait"/> on the clock (forever when <c>null</c>) or a settings change,
-    /// whichever comes first.</summary>
-    private async Task WaitAsync(TimeSpan? wait, CancellationToken stoppingToken)
+    /// <summary>Waits until <paramref name="deadline"/> on the clock (forever when <c>null</c>) or a settings
+    /// change, whichever comes first. The clock is read again once the timer is armed, so a clock that moved past
+    /// the deadline in between never leaves the loop waiting on a timer set too late.</summary>
+    private async Task WaitAsync(DateTimeOffset? deadline, CancellationToken stoppingToken)
     {
         using CancellationTokenSource done = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         Task signal = wake.WaitAsync(done.Token);
-        Task delay = wait is { } due ? Task.Delay(due, time, done.Token) : Task.Delay(Timeout.Infinite, done.Token);
-        await Task.WhenAny(signal, delay);
+        Task delay = deadline is { } due
+            ? Task.Delay(Positive(due - time.GetUtcNow()), time, done.Token)
+            : Task.Delay(Timeout.Infinite, done.Token);
+        if (deadline is null || deadline.Value > time.GetUtcNow())
+        {
+            await Task.WhenAny(signal, delay);
+        }
+
         await done.CancelAsync();
         try
         {
@@ -245,9 +250,14 @@ internal sealed class Watcher : BackgroundService
         }
     }
 
+    private static TimeSpan Positive(TimeSpan span)
+    {
+        return span > TimeSpan.Zero ? span : TimeSpan.Zero;
+    }
+
     /// <summary>The allowed projects that have a factory job in an active stage: each
-    /// <c>factory/jobs/&lt;id&gt;/state.json</c> read through <see cref="SafeFileReader"/> (64 KiB cap); an
-    /// unreadable or invalid file is ignored.</summary>
+    /// <c>factory/jobs/&lt;id&gt;/state.json</c> read through <see cref="SafeFileReader"/> (64 KiB cap); a job
+    /// folder that is a symlink and an unreadable or invalid file are ignored.</summary>
     private static SortedSet<string> ActiveProjects(string root, IReadOnlySet<string> allowed)
     {
         SortedSet<string> active = new(StringComparer.Ordinal);
@@ -269,6 +279,11 @@ internal sealed class Watcher : BackgroundService
 
         foreach (DirectoryInfo folder in folders)
         {
+            if (folder.LinkTarget is not null)
+            {
+                continue;
+            }
+
             byte[]? bytes = SafeFileReader.ReadBytesAt(folder.FullName, "state.json", MaxStateBytes);
             if (bytes is null)
             {

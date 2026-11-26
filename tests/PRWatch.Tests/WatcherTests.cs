@@ -28,8 +28,14 @@ public sealed class WatcherTests
     {
         Environment.SetEnvironmentVariable("SECRET_X", "do-not-pass");
         using WatcherRig rig = new();
-
-        await rig.Poll();
+        try
+        {
+            await rig.Poll();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SECRET_X", null);
+        }
 
         string expected = PollRunner.FixedPath.Split(':')
             .Select(folder => Path.Combine(folder, "python3"))
@@ -367,6 +373,10 @@ public sealed class WatcherTests
         rig.Job("5-e", "{\"project\":\"Beta\",\"stage\":\"review\",\"pad\":\"" + new string('x', 70 * 1024) + "\"}");
         rig.Job("6-f", "{\"project\":\"Gamma\",\"stage\":\"spec\"}");
         rig.Job("7-g", "[\"Beta\",\"spec\"]");
+        string outside = Path.Combine(rig.Folder, "outside-job");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "state.json"), "{\"project\":\"Beta\",\"stage\":\"build\"}");
+        Directory.CreateSymbolicLink(Path.Combine(rig.Root, "factory", "jobs", "8-link"), outside);
 
         await rig.Poll();
 
@@ -563,6 +573,26 @@ public sealed class WatcherTests
 
         Assert.True(FakeJobPy.Calls(calls).Count >= 3);
         Assert.Equal(hash, TestFactoryRoot.Hash(root));
+    }
+
+    [Fact]
+    public async Task Loop_WhenTheClockPassesTheDeadlineBeforeTheTimerIsArmed_StillPollsAtOnce()
+    {
+        using PrWatchFactory factory = Host(out string root, out _, out string claude);
+        WriteSettings(factory, root, claude);
+        int moved = 0;
+        factory.Clock.TimerCreating = due =>
+        {
+            if (due == TimeSpan.FromMinutes(5) && Interlocked.Exchange(ref moved, 1) == 0)
+            {
+                factory.Clock.Advance(TimeSpan.FromMinutes(5));
+            }
+        };
+        using HttpClient client = factory.CreateTokenClient();
+
+        await WaitForLastPoll(client, FakeClock.DefaultNow.AddMinutes(5));
+
+        Assert.Equal(1, Volatile.Read(ref moved));
     }
 
     [Fact]
