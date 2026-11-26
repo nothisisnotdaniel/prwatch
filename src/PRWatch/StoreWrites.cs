@@ -7,7 +7,8 @@ internal static class StoreWrites
 {
     /// <summary>False only for <see cref="OutOfMemoryException"/>, <see cref="InsufficientExecutionStackException"/>,
     /// <see cref="AccessViolationException"/> and <see cref="ThreadInterruptedException"/>; true for every other
-    /// exception.</summary>
+    /// exception. The list is complete for .NET: <see cref="StackOverflowException"/> cannot be caught, and
+    /// <c>ThreadAbortException</c> is never thrown on .NET Core.</summary>
     public static bool IsNonFatal(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);

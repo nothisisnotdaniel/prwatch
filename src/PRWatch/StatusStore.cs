@@ -39,7 +39,8 @@ internal sealed class StatusStore
     internal Func<Status, Status> BeforeSave { get; set; } = status => status;
 
     /// <summary>Test-only: writes the serialized status to its path, so a test can make a save fail.
-    /// <see cref="PrivateFileWriter.Write"/> in production; never set from config or a request.</summary>
+    /// <see cref="PrivateFileWriter.Write"/> in production; never set from config or a request. The save reads it
+    /// under the store's lock, but setting it takes no lock: tests set it only while no other save runs.</summary>
     internal Action<string, byte[]> Writer { get; set; } = PrivateFileWriter.Write;
 
     /// <summary>The current status.</summary>
