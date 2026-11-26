@@ -356,8 +356,12 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
             run.Touch?.Dispose();
             updateLock.Release();
             DateTimeOffset now = time.GetUtcNow();
-            bool auth = !failed && (figures.AuthInResult
+            // Only a run with no end reason can be an auth error: a killed run (timeout, output_too_large,
+            // stopped) keeps its reason as the result, so it never sets "needs login", and the non-zero exit of
+            // the kill says nothing about the login.
+            bool auth = run.Reason is null && !failed && (figures.AuthInResult
                 || (figures.Results == 0 && exitCode is not 0 && exitCode is not null && authInStderr));
+            bool killed = run.Reason is RunStatus.Timeout or RunStatus.OutputTooLarge or RunStatus.Stopped;
             string result;
             if (run.Reason is { } reason)
             {
@@ -394,7 +398,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                 {
                     login = login with { State = LoginStatus.NeedsLogin };
                 }
-                else if (figures.Results > 0)
+                else if (figures.Results > 0 && !(killed && figures.AuthInResult))
                 {
                     login = login with { State = LoginStatus.Ok };
                 }
