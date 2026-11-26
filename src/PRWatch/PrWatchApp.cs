@@ -13,6 +13,12 @@ internal static class PrWatchApp
 
     public const string StatusRoute = "/api/status";
 
+    public const string ReviewRoute = "/api/prs/review";
+
+    public const string MergeRoute = "/api/prs/merge";
+
+    public const string CancelRoute = "/api/prs/cancel";
+
     /// <summary>The largest settings body a <c>POST</c> may send.</summary>
     public const int MaxSettingsBodyBytes = 16 * 1024;
 
@@ -77,7 +83,8 @@ internal static class PrWatchApp
         services.Services.AddHostedService(provider => provider.GetRequiredService<Watcher>());
     }
 
-    /// <summary>Maps <c>GET</c>/<c>POST /api/settings</c> and <c>GET /api/status</c>.</summary>
+    /// <summary>Maps <c>GET</c>/<c>POST /api/settings</c>, <c>GET /api/status</c> and the request routes
+    /// <c>POST /api/prs/review</c>, <c>/api/prs/merge</c> and <c>/api/prs/cancel</c>.</summary>
     public static void Map(RoomRoutes routes)
     {
         ArgumentNullException.ThrowIfNull(routes);
@@ -86,6 +93,76 @@ internal static class PrWatchApp
         routes.MapPost(SettingsRoute, ChangeSettings);
         routes.App.MapGet(StatusRoute, (HttpContext context, StatusStore status) =>
             Json(context, JsonSerializer.Serialize(status.Current, PrWatchJson.Options), StatusCodes.Status200OK));
+        routes.MapPost(ReviewRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
+            SubmitRequest(context, RequestWriter.Review, settings, status, watcher));
+        routes.MapPost(MergeRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
+            SubmitRequest(context, RequestWriter.Merge, settings, status, watcher));
+        routes.MapPost(CancelRoute, (HttpContext context, SettingsStore settings, StatusStore status, Watcher watcher) =>
+            SubmitRequest(context, RequestWriter.Cancel, settings, status, watcher));
+    }
+
+    /// <summary>Checks the body (<c>400 invalid_request</c>, also without a valid factory root), finds the PR in
+    /// the last poll (<c>404 unknown_pr</c>) with the head the user saw (<c>409 stale_request</c>), writes the
+    /// request file (<c>500 write_failed</c>), sets the PR's <c>request</c> in the status and, while
+    /// <c>enabled</c> is on, has the watcher poll at once. Only fixed texts go into the response.</summary>
+    private static async Task<IResult> SubmitRequest(HttpContext context, string action, SettingsStore settings,
+        StatusStore status, Watcher watcher)
+    {
+        byte[]? body = await ReadCapped(context.Request, RequestWriter.MaxBodyBytes);
+        string? root = settings.Current.FactoryRoot;
+        if (body is null || root is null || !SettingsRules.IsFactoryRoot(root))
+        {
+            return RequestError(context, "invalid_request", StatusCodes.Status400BadRequest);
+        }
+
+        PrRequest? request = RequestWriter.Parse(action, body, FactoryInfo.Read(root).Projects);
+        if (request is null)
+        {
+            return RequestError(context, "invalid_request", StatusCodes.Status400BadRequest);
+        }
+
+        PrStatus? pr = status.Current.Prs.FirstOrDefault(
+            item => item.Project == request.Project && item.Number == request.Number);
+        if (pr is null)
+        {
+            return RequestError(context, "unknown_pr", StatusCodes.Status404NotFound);
+        }
+
+        if (pr.HeadSha != request.HeadSha)
+        {
+            return RequestError(context, "stale_request", StatusCodes.Status409Conflict);
+        }
+
+        if (!RequestWriter.Write(root, request))
+        {
+            return RequestError(context, "write_failed", StatusCodes.Status500InternalServerError);
+        }
+
+        status.Update(previous => previous with
+        {
+            Prs = [.. previous.Prs.Select(item =>
+                item.Project == request.Project && item.Number == request.Number && item.HeadSha == request.HeadSha
+                    ? item with { Request = request.Action }
+                    : item)],
+        });
+        if (settings.Current.Enabled)
+        {
+            watcher.PollSoon();
+        }
+
+        JsonObject done = new()
+        {
+            ["action"] = request.Action,
+            ["project"] = request.Project,
+            ["number"] = request.Number,
+            ["headSha"] = request.HeadSha,
+        };
+        return Json(context, done.ToJsonString(), StatusCodes.Status200OK);
+    }
+
+    private static IResult RequestError(HttpContext context, string code, int status)
+    {
+        return Json(context, new JsonObject { ["error"] = code }.ToJsonString(), status);
     }
 
     private static async Task<IResult> ChangeSettings(HttpContext context, SettingsStore settings, StatusStore status)

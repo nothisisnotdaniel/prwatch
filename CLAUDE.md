@@ -61,7 +61,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   - **Secrets:** the token, the Claude login and any `CLAUDE_CODE_OAUTH_TOKEN` are never logged, shown or cached
     by the service worker. PRWatch does not store a Claude credential; it uses the keychain login.
 - **Watcher rules:** poll every 5 min (setting); start a review only for a PR whose `headSha` has had no new push
-  for 10 min (setting) and whose round is missing or not `current`; one run at a time in total, never while a
+  for 10 min (setting) and whose round is missing or not `current` (a `review`, `merge` or `cancel` request from
+  `POST /api/prs/<action>`, written by `RequestWriter`, skips the round, trust and same-head rules); one run at a time in total, never while a
   factory job of that project is in `spec`, `build`, `review` or `approve` (read-only check of
   `factory/jobs/*/state.json`), and never while the off switch is set or the token brake holds. A run's exit and
   its stream-json `result` events are recorded in the status file.

@@ -11,8 +11,6 @@ internal sealed class Watcher : BackgroundService
 {
     public const long MaxStateBytes = 64 * 1024;
 
-    public const string ReviewRequest = "review";
-
     /// <summary>The job stages in which a project's checkout is busy.</summary>
     public static readonly string[] ActiveStages = ["spec", "build", "review", "approve"];
 
@@ -121,8 +119,10 @@ internal sealed class Watcher : BackgroundService
         }
     }
 
-    /// <summary>The first PR in <c>prs</c> order that needs a review now, or <c>null</c> (also while the brake
-    /// holds or the login is needed).</summary>
+    /// <summary>The first PR in <c>prs</c> order that needs a run now, or <c>null</c> (also while the brake
+    /// holds or the login is needed). A PR with a <c>review</c>, <c>merge</c> or <c>cancel</c> request is picked
+    /// past the round, trust and same-head rules, but never during the quiet time or while a job of its project is
+    /// active.</summary>
     public static ReviewPick? Choose(Status status, Settings settings, IReadOnlySet<string> activeProjects,
         DateTimeOffset now)
     {
@@ -137,16 +137,21 @@ internal sealed class Watcher : BackgroundService
         TimeSpan quiet = TimeSpan.FromMinutes(settings.QuietMinutes);
         foreach (PrStatus pr in status.Prs)
         {
-            bool consent = pr.Request == ReviewRequest;
-            if (pr.Round is { Current: true }
-                || now - pr.HeadSeenAt < quiet
-                || !(consent || (pr.Trusted && settings.AutoReviewTrusted))
-                || activeProjects.Contains(pr.Project))
+            if (now - pr.HeadSeenAt < quiet || activeProjects.Contains(pr.Project))
             {
                 continue;
             }
 
-            if (!consent
+            // A request is the user's tap for this head: it is handed to the run even when the round is current,
+            // the author is untrusted, auto-review is off or a run already ran for this head.
+            bool requested = pr.Request is not null && PrRules.Requests.Contains(pr.Request, StringComparer.Ordinal);
+            if (!requested
+                && (pr.Round is { Current: true } || !(pr.Trusted && settings.AutoReviewTrusted)))
+            {
+                continue;
+            }
+
+            if (!requested
                 && status.Runs.TryGetValue(PrRules.RunKey(pr.Project, pr.Number), out RunStatus? run)
                 && run.HeadSha == pr.HeadSha)
             {
@@ -157,6 +162,14 @@ internal sealed class Watcher : BackgroundService
         }
 
         return null;
+    }
+
+    /// <summary>Wakes the loop for one poll at once (as turning <c>enabled</c> on does); the loop polls only while
+    /// <c>enabled</c> is on.</summary>
+    public void PollSoon()
+    {
+        Interlocked.Exchange(ref pollNow, 1);
+        Wake();
     }
 
     public override void Dispose()
@@ -220,6 +233,11 @@ internal sealed class Watcher : BackgroundService
             Interlocked.Exchange(ref pollNow, 1);
         }
 
+        Wake();
+    }
+
+    private void Wake()
+    {
         try
         {
             if (wake.CurrentCount == 0)
