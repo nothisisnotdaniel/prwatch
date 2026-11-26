@@ -11,6 +11,7 @@ namespace PRWatch.Tests;
 /// write decides the value itself. Each test has its own host, temp folder, factory root, fake <c>job.py</c> (held
 /// through its <c>poll-wait</c> gate), fake runner and clock; <c>enabled</c> stays off, so the only polls are the
 /// ones the test starts.</summary>
+[Collection("RequestWriter")]
 public sealed class RequestRaceTests
 {
     private const string Sha = WatcherRig.ShaA;

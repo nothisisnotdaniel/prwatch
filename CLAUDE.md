@@ -45,7 +45,7 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     folder made with libc `mkdir`, touched every 10 min, deleted only while it holds PRWatch's marker and never
     through a symlink; a lock without the marker is the updater's and is never changed) and the request files
     `factory/prs/<repo>-<n>/request.json` (atomic write: temp file in the same folder, then rename; never through a
-    symlink). It never writes job records, backlogs, reviews, comments
+    symlink; written relative to no-follow folder handles). It never writes job records, backlogs, reviews, comments
     or any file in a project repo or the factory root.
   - **Processes:** PRWatch runs exactly two programs, each with a fixed `ProcessStartInfo.ArgumentList`, never
     through a shell, never with an argument taken from a request except a PR number (digits only, checked) and a

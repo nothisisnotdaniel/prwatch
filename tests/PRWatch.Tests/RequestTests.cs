@@ -12,6 +12,7 @@ namespace PRWatch.Tests;
 /// <c>/api/prs/merge</c> and <c>/api/prs/cancel</c>, the checks against the last poll and the atomic, link-free
 /// write of <c>factory/prs/&lt;repo&gt;-&lt;n&gt;/request.json</c>. Each test has its own temp folder, factory root,
 /// fake <c>job.py</c>, fake runner and clock.</summary>
+[Collection("RequestWriter")]
 public sealed class RequestTests
 {
     private const string Sha = WatcherRig.ShaA;
@@ -322,6 +323,190 @@ public sealed class RequestTests
         }
         finally
         {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // --- Job 448: writes relative to no-follow folder handles ----------------------------------------
+
+    [Fact]
+    public void Write_OverAnExisting0644File_LeavesIt0600_WithTheBytes()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-request-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string root = TestFactoryRoot.Create(folder);
+            string pr = Path.Combine(root, "factory", "prs", "Alpha-2");
+            Directory.CreateDirectory(pr);
+            string file = Path.Combine(pr, "request.json");
+            File.WriteAllText(file, "{\"old\":true}");
+            File.SetUnixFileMode(file, Mode600 | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+            PrRequest request = new("merge", "Alpha", 2, Sha, false);
+
+            Assert.True(RequestWriter.Write(root, request));
+
+            Assert.Equal(RequestWriter.FileBytes(request), File.ReadAllBytes(file));
+            Assert.Equal(Mode600, File.GetUnixFileMode(file));
+            Assert.Equal(["request.json"], Directory.GetFileSystemEntries(pr).Select(Path.GetFileName));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("folder")]
+    [InlineData("prs")]
+    public async Task AFolderSwappedForALinkMidWrite_WritesOnlyIntoTheOriginalFolder(string place)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-request-" + Guid.NewGuid().ToString("N"));
+        string outside = Path.Combine(folder, "outside");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "keep.txt"), "keep");
+        Directory.CreateDirectory(Path.Combine(outside, "Alpha-1"));
+        string root = TestFactoryRoot.Create(folder);
+        string prs = Path.Combine(root, "factory", "prs");
+        string swapped = place == "prs" ? prs : Path.Combine(prs, "Alpha-1");
+        string away = Path.Combine(folder, "away");
+        string hash = TestFactoryRoot.Hash(outside);
+        try
+        {
+            using Rig rig = await Rig.Start(folder: folder, root: root);
+            rig.SeedPr("Alpha", 1, Sha);
+            RequestWriter.BeforeStep = step =>
+            {
+                if (step == "folders-open")
+                {
+                    Directory.Move(swapped, away);
+                    Directory.CreateSymbolicLink(swapped, outside);
+                }
+            };
+
+            using HttpResponseMessage response = await rig.Post("review", Body("review", "Alpha", 1, Sha, true));
+            RequestWriter.BeforeStep = null;
+
+            Assert.Equal(hash, TestFactoryRoot.Hash(outside));
+            Assert.Empty(Directory.EnumerateFiles(outside, "request.json", SearchOption.AllDirectories));
+            Assert.Empty(Directory.EnumerateFiles(outside, "*.tmp", SearchOption.AllDirectories));
+            string original = place == "prs" ? Path.Combine(away, "Alpha-1") : away;
+            string[] written = [.. Directory.EnumerateFiles(folder, "request.json", SearchOption.AllDirectories)];
+            Assert.All(written, file => Assert.StartsWith(original + Path.DirectorySeparatorChar, file, StringComparison.Ordinal));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            AssertRequestFile(Path.Combine(original, "request.json"), "review", Sha, consent: true);
+        }
+        finally
+        {
+            RequestWriter.BeforeStep = null;
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AFileLinkedInBeforeTheRename_IsReplaced_AndItsTargetIsUnchanged()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-request-" + Guid.NewGuid().ToString("N"));
+        string outside = Path.Combine(folder, "outside");
+        Directory.CreateDirectory(outside);
+        string target = Path.Combine(outside, "target.json");
+        File.WriteAllText(target, "{\"keep\":true}");
+        string root = TestFactoryRoot.Create(folder);
+        string file = Path.Combine(root, "factory", "prs", "Alpha-1", "request.json");
+        try
+        {
+            using Rig rig = await Rig.Start(folder: folder, root: root);
+            rig.SeedPr("Alpha", 1, Sha);
+            RequestWriter.BeforeStep = step =>
+            {
+                if (step == "before-rename")
+                {
+                    File.CreateSymbolicLink(file, target);
+                }
+            };
+
+            using HttpResponseMessage response = await rig.Post("review", Body("review", "Alpha", 1, Sha, true));
+            RequestWriter.BeforeStep = null;
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("{\"keep\":true}", File.ReadAllText(target));
+            Assert.Null(new FileInfo(file).LinkTarget);
+            Assert.Equal(Mode600, File.GetUnixFileMode(file));
+            Assert.Equal(RequestWriter.FileBytes(new PrRequest("review", "Alpha", 1, Sha, true)), File.ReadAllBytes(file));
+            Assert.Equal(["request.json"], Directory.GetFileSystemEntries(Path.GetDirectoryName(file)!).Select(Path.GetFileName));
+        }
+        finally
+        {
+            RequestWriter.BeforeStep = null;
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AFailureAfterTheTempFile_Is500WriteFailed_AndLeavesNoTempFile()
+    {
+        using Rig rig = await Rig.Start();
+        rig.SeedPr("Alpha", 1, Sha);
+        string pr = Path.Combine(rig.Root, "factory", "prs", "Alpha-1");
+        bool reached = false;
+        RequestWriter.BeforeStep = step =>
+        {
+            if (step == "before-rename")
+            {
+                reached = Directory.EnumerateFiles(pr, ".request.json.*.tmp").Any();
+                throw new IOException("SEEDED-HOOK-FAILURE");
+            }
+        };
+        try
+        {
+            using HttpResponseMessage response = await rig.Post("merge", Body("merge", "Alpha", 1, Sha, false));
+            RequestWriter.BeforeStep = null;
+
+            await AssertError(response, HttpStatusCode.InternalServerError, "write_failed");
+            Assert.True(reached);
+            Assert.Empty(Directory.EnumerateFiles(pr, ".request.json.*.tmp"));
+            Assert.Empty(Directory.GetFileSystemEntries(pr));
+            Assert.DoesNotContain(rig.Log.Lines, line => line.Contains("SEEDED-HOOK-FAILURE", StringComparison.Ordinal));
+        }
+        finally
+        {
+            RequestWriter.BeforeStep = null;
+        }
+    }
+
+    [Fact]
+    public void Write_OnAnUnsupportedPlatform_ReturnsFalse_AndWritesNothing()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-request-" + Guid.NewGuid().ToString("N"));
+        RequestWriter.PlatformSupportedOverride = false;
+        try
+        {
+            string root = TestFactoryRoot.Create(folder);
+            string hash = TestFactoryRoot.Hash(folder);
+
+            bool written = RequestWriter.Write(root, new PrRequest("review", "Alpha", 1, Sha, true));
+
+            Assert.False(written);
+            Assert.False(Directory.Exists(Path.Combine(root, "factory", "prs")));
+            Assert.Equal(hash, TestFactoryRoot.Hash(folder));
+        }
+        finally
+        {
+            RequestWriter.PlatformSupportedOverride = null;
             Directory.Delete(folder, recursive: true);
         }
     }
