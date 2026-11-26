@@ -87,6 +87,7 @@ internal sealed class Watcher : BackgroundService
         JsonElement top = outcome.Output.RootElement;
         SortedSet<string> active = ActiveProjects(root, allowed);
         List<SkipStatus> skipped = ReadSkipped(top.GetProperty("skipped"), allowed);
+        HashSet<string> polledSkips = new(skipped.Select(skip => skip.Project), StringComparer.Ordinal);
         skipped.AddRange(active.Select(name => new SkipStatus { Project = name, Reason = SkipStatus.JobActive }));
         bool runnerBusy = runner.IsBusy;
         IReadOnlyList<LedgerEntry> entries = ledger.Entries;
@@ -94,6 +95,10 @@ internal sealed class Watcher : BackgroundService
         status.Update(previous =>
         {
             List<PrStatus> prs = ApplyNoted(ReadPrs(top.GetProperty("prs"), allowed, previous.Prs, now), pollStart);
+            // A tap of a PR that a fully read project no longer lists (closed, merged) is dropped, so the taps stay
+            // within PrRules.MaxPrs; a project job.py skipped keeps its taps.
+            HashSet<string> listed = new(prs.Select(pr => PrRules.RunKey(pr.Project, pr.Number)), StringComparer.Ordinal);
+            HashSet<string> read = new(allowed.Where(name => !polledSkips.Contains(name)), StringComparer.Ordinal);
             Status next = previous with
             {
                 LastPoll = now,
@@ -107,7 +112,8 @@ internal sealed class Watcher : BackgroundService
                 Runs = previous.Runs.RemoveRange(
                     previous.Runs.Keys.Where(key => !known.Contains(PrRules.RunKeyProject(key))).ToList()),
                 Taps = previous.Taps.RemoveRange(
-                    previous.Taps.Keys.Where(key => !known.Contains(PrRules.RunKeyProject(key))).ToList()),
+                    previous.Taps.Keys.Where(key => !known.Contains(PrRules.RunKeyProject(key))
+                        || (read.Contains(PrRules.RunKeyProject(key)) && !listed.Contains(key))).ToList()),
                 LastError = previous.LastError is { } error
                     && StatusError.PollCodes.Contains(error.Code, StringComparer.Ordinal)
                         ? null
@@ -170,8 +176,9 @@ internal sealed class Watcher : BackgroundService
 
             // A request is the user's tap for this head: it is handed to the run even when the round is current,
             // the author is untrusted, auto-review is off or a run already ran for this head.
-            // Each tap starts at most one run: once a run used the request, a request file left behind (a failed
-            // `job.py pr request`, a run that never reached it) counts for nothing until the user taps again.
+            // Each tap starts at most one run: once a run used the request, or the author pushed past the tapped
+            // head, a request file left behind (a failed `job.py pr request`, a run that never reached it) counts
+            // for nothing until the user taps again.
             bool requested = pr.Request is not null
                 && PrRules.Requests.Contains(pr.Request, StringComparer.Ordinal)
                 && !IsRequestUsed(status, pr);
@@ -194,9 +201,10 @@ internal sealed class Watcher : BackgroundService
         return null;
     }
 
-    /// <summary>True when <paramref name="pr"/> has a request that a run already used: the PR's last run was
-    /// handed a request, for the PR's head, and started no earlier than the PR's last tap (or there is no
-    /// tap).</summary>
+    /// <summary>True when <paramref name="pr"/>'s request counts for nothing (it is judged as no request): the
+    /// PR's last tap named another head (the author pushed since; the leftover file starts no run for the new
+    /// head), or the PR's last run was handed a request and either there is no tap or the run was for the PR's
+    /// head and started no earlier than the tap.</summary>
     public static bool IsRequestUsed(Status status, PrStatus pr)
     {
         ArgumentNullException.ThrowIfNull(status);
@@ -207,15 +215,19 @@ internal sealed class Watcher : BackgroundService
         }
 
         string key = PrRules.RunKey(pr.Project, pr.Number);
-        if (!status.Runs.TryGetValue(key, out RunStatus? run)
-            || run.Request is null
-            || run.HeadSha != pr.HeadSha)
+        status.Taps.TryGetValue(key, out TapStatus? tap);
+        if (tap is not null && tap.HeadSha != pr.HeadSha)
+        {
+            return true;
+        }
+
+        if (!status.Runs.TryGetValue(key, out RunStatus? run) || run.Request is null)
         {
             return false;
         }
 
-        return !status.Taps.TryGetValue(key, out TapStatus? tap)
-            || (run.StartedAt is { } started && started >= tap.At);
+        return tap is null
+            || (run.HeadSha == pr.HeadSha && run.StartedAt is { } started && started >= tap.At);
     }
 
     /// <summary>Notes a request just written by <c>POST /api/prs/&lt;action&gt;</c>, so that a poll that started
