@@ -40,3 +40,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#31](backlog/031-keep-a-live-review-s-update.md) Keep a live review's update lock when a second instance starts
 - [ ] [#32](backlog/032-note-why-the-roomkit-feed-tests.md) Note why the RoomKit feed tests need bash
 - [h] [#35](backlog/035-put-prwatch-on-tailscale-and-add.md) Put PRWatch on Tailscale and add it to the iPhone home screen (after: #34)
+- [ ] [#36](backlog/036-keep-the-stored-github-packages-token.md) Keep the stored GitHub Packages token behind a keychain prompt
