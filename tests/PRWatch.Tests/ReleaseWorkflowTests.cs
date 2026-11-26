@@ -233,6 +233,32 @@ public sealed class ReleaseWorkflowTests : IDisposable
     }
 
     [Fact]
+    public void PublishStepsExplainTheSharedOutputFolder()
+    {
+        string workflow = Workflow();
+        string macos = PublishComment(Job(workflow, "macos"));
+
+        Assert.Contains("$RUNNER_TEMP/publish", macos, StringComparison.Ordinal);
+        Assert.Contains("Smoke check", macos, StringComparison.Ordinal);
+        Assert.Contains("Pack", macos, StringComparison.Ordinal);
+        Assert.Equal(macos, PublishComment(Job(workflow, "verify")));
+    }
+
+    private static string PublishComment(string job)
+    {
+        string[] lines = job.Split('\n');
+        int publish = Array.IndexOf(lines, "      - name: Publish");
+        Assert.True(publish > 0);
+        int start = publish;
+        while (start > 0 && lines[start - 1].StartsWith("      #", StringComparison.Ordinal))
+        {
+            start--;
+        }
+
+        return string.Join('\n', lines[start..publish]);
+    }
+
+    [Fact]
     public void Macos_PublishesSmokeChecksPacksAndHashes()
     {
         string macos = Job(Workflow(), "macos");
