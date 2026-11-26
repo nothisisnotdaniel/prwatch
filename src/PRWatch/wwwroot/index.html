@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="PRWatch">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+  <title>PRWatch</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/prwatch.css">
+  <script src="/room.js" defer></script>
+  <script src="/token.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top" id="top">
+    <h1 id="top-title">PRWatch</h1>
+  </header>
+  <nav class="nav tab-bar" aria-label="Sections" hidden></nav>
+  <main id="home">
+    <section class="status-bar" id="status-bar" aria-label="Status">
+      <p class="status-line" id="status-brake"></p>
+      <p class="status-line" id="status-login"></p>
+      <p class="status-line" id="status-poll"></p>
+      <p class="status-line" id="status-error"></p>
+      <ul class="status-skipped" id="status-skipped"></ul>
+    </section>
+    <div class="switch-row">
+      <input class="switch" id="enabled" type="checkbox" role="switch">
+      <label for="enabled">Watch pull requests</label>
+    </div>
+    <p class="error" id="switch-error" role="alert" hidden></p>
+    <p class="status" id="home-status" role="status">Loading…</p>
+    <p class="error" id="request-error" role="alert" hidden></p>
+    <section class="prs" id="prs" aria-label="Pull requests"></section>
+    <details class="settings">
+      <summary>Settings</summary>
+      <form class="settings-form" id="settings-form" novalidate>
+      <div class="field">
+        <label for="field-factoryRoot">Factory root</label>
+        <input id="field-factoryRoot" name="factoryRoot" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p class="field-help">The folder that holds factory/tools/job.py, for example /Users/you/Claude.</p>
+        <p class="field-error" id="error-factoryRoot" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-projects">Projects</label>
+        <select id="field-projects" name="projects" multiple></select>
+        <p class="field-help">None selected: every project.</p>
+        <p class="field-error" id="error-projects" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-pollMinutes">Poll every (minutes)</label>
+        <input id="field-pollMinutes" name="pollMinutes" type="number" inputmode="decimal" min="1" max="60" step="1">
+        <p class="field-error" id="error-pollMinutes" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-quietMinutes">Wait after a push (minutes)</label>
+        <input id="field-quietMinutes" name="quietMinutes" type="number" inputmode="decimal" min="0" max="120" step="1">
+        <p class="field-error" id="error-quietMinutes" role="alert" hidden></p>
+      </div>
+      <div class="field field-check">
+        <input id="field-autoReviewTrusted" name="autoReviewTrusted" type="checkbox">
+        <label for="field-autoReviewTrusted">Review trusted authors on their own</label>
+        <p class="field-error" id="error-autoReviewTrusted" role="alert" hidden></p>
+      </div>
+      <div class="field field-check">
+        <input id="field-autoMergeTrusted" name="autoMergeTrusted" type="checkbox">
+        <label for="field-autoMergeTrusted">Merge clean rounds of trusted authors on their own</label>
+        <p class="field-error" id="error-autoMergeTrusted" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-reviewerMode">Reviewer mode</label>
+        <select id="field-reviewerMode" name="reviewerMode"></select>
+        <p class="field-help" id="effective-mode"></p>
+        <p class="field-error" id="error-reviewerMode" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-maxBudgetUsd">Budget per run (USD)</label>
+        <input id="field-maxBudgetUsd" name="maxBudgetUsd" type="number" inputmode="decimal" min="0.1" max="20" step="0.1">
+        <p class="field-error" id="error-maxBudgetUsd" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-brakeFiveHourPercent">Brake at 5-hour plan usage (%)</label>
+        <input id="field-brakeFiveHourPercent" name="brakeFiveHourPercent" type="number" inputmode="decimal" min="1" max="100" step="1">
+        <p class="field-error" id="error-brakeFiveHourPercent" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-brakeSevenDayPercent">Brake at weekly plan usage (%)</label>
+        <input id="field-brakeSevenDayPercent" name="brakeSevenDayPercent" type="number" inputmode="decimal" min="1" max="100" step="1">
+        <p class="field-error" id="error-brakeSevenDayPercent" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-brakeFiveHourUsd">Brake at 5-hour cost (USD)</label>
+        <input id="field-brakeFiveHourUsd" name="brakeFiveHourUsd" type="number" inputmode="decimal" min="0.5" max="500" step="0.1">
+        <p class="field-error" id="error-brakeFiveHourUsd" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-brakeSevenDayUsd">Brake at 7-day cost (USD)</label>
+        <input id="field-brakeSevenDayUsd" name="brakeSevenDayUsd" type="number" inputmode="decimal" min="0.5" max="500" step="0.1">
+        <p class="field-error" id="error-brakeSevenDayUsd" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-brakeRunsPerHour">Most runs per hour</label>
+        <input id="field-brakeRunsPerHour" name="brakeRunsPerHour" type="number" inputmode="decimal" min="1" max="10" step="1">
+        <p class="field-error" id="error-brakeRunsPerHour" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="field-claudePath">claude path</label>
+        <input id="field-claudePath" name="claudePath" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p class="field-help">The absolute path of the claude program, for example /Users/you/.local/bin/claude.</p>
+        <p class="field-error" id="error-claudePath" role="alert" hidden></p>
+      </div>
+        <p class="error" id="settings-error" role="alert" hidden></p>
+        <p class="status" id="settings-status" role="status"></p>
+        <button class="primary" type="submit">Save settings</button>
+      </form>
+    </details>
+  </main>
+  <main id="token" hidden>
+    <form class="token-form" id="token-form" novalidate>
+      <h1 class="token-title">PRWatch</h1>
+      <p class="token-help">Enter the access token once on this device. Show it on the Mac with: <code>dotnet run --project src/PRWatch -- token</code></p>
+      <p class="error" id="token-refused" role="alert" hidden></p>
+      <label class="token-label" for="token-input">Access token</label>
+      <input class="token-input" id="token-input" name="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="token-save" type="submit">Save</button>
+    </form>
+  </main>
+</body>
+</html>

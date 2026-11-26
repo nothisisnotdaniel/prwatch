@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-15
+    # GitHub Packages needs a token even to read RoomKit; only the Restore step gets it.
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        env:
+          NuGetPackageSourceCredentials_github: Username=github;Password=${{ secrets.GITHUB_TOKEN }}
+        run: dotnet restore
+
+      - name: Check the RoomKit package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(sed -n 's/.*<PackageReference Include="RoomKit" Version="\[\([0-9][0-9.]*\)\]".*/\1/p' src/PRWatch/PRWatch.csproj)
+          if [ -z "$version" ]; then
+            echo "No pinned RoomKit version in src/PRWatch/PRWatch.csproj." >&2
+            exit 1
+          fi
+          package="${NUGET_PACKAGES:-$HOME/.nuget/packages}/roomkit/$version/roomkit.$version.nupkg"
+          if [ ! -f "$package" ] || [ -L "$package" ]; then
+            echo "RoomKit.$version.nupkg is not in the restored packages." >&2
+            exit 1
+          fi
+          actual=$(shasum -a 256 "$package" | awk '{ print $1 }')
+          pinned=""
+          if [ -f roomkit.sha256 ]; then
+            pinned=$(awk -v name="RoomKit.$version.nupkg" 'NR == 1 && NF == 2 && $2 == name { hash = $1 } END { if (NR == 1) print hash }' roomkit.sha256)
+          fi
+          if [ -z "$pinned" ] || [ "$pinned" != "$actual" ]; then
+            echo "RoomKit.$version.nupkg does not match roomkit.sha256." >&2
+            exit 1
+          fi
+          # Every attestation must come from roomkit's release.yml on main, run by a merged pull request on a
+          # GitHub-hosted runner; true only then. A pull_request run with refs/heads/main is a closed PR running
+          # main's own release.yml, so "merged" rests on that workflow's merged == true gate in roomkit.
+          if ! verified=$(gh attestation verify "$package" --repo nothisisnotdaniel/roomkit --cert-identity https://github.com/nothisisnotdaniel/roomkit/.github/workflows/release.yml@refs/heads/main --cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref refs/heads/main --deny-self-hosted-runners --format json --jq 'length > 0 and all(.[]; .verificationResult.signature.certificate | .githubWorkflowTrigger == "pull_request" and .sourceRepositoryRef == "refs/heads/main" and .runnerEnvironment == "github-hosted")') || [ "$verified" != "true" ]; then
+            echo "RoomKit.$version.nupkg has no valid roomkit release attestation." >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: dotnet build -warnaserror --no-restore
+
+      - name: Test
+        run: dotnet test --no-build
