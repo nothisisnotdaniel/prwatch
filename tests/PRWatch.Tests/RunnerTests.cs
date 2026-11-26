@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -978,6 +980,196 @@ public sealed class RunnerTests
         {
             Assert.Equal(StatusError.RunFailed, rig.Watch.Status.Current.LastError?.Code);
             Assert.Null(rig.Watch.Status.Current.UpdateLock);
+        }
+    }
+
+    // --- job 443: a kill stops the output reads ----------------------------------------------------
+
+    [Fact]
+    public async Task Timeout_WithAnOrphanHoldingThePipes_EndsTheRun_ReleasesTheLock_AndTheNextRunGoes()
+    {
+        using Rig rig = new(TimeSpan.FromSeconds(60));
+        try
+        {
+            FakeClaude.SetStream(rig.Claude, "#orphan", "#wait", Result());
+            string before = rig.Watch.Status.Current.Login.State;
+
+            Assert.True(rig.Runner.TryStart(Alpha1));
+            int orphan = await WaitForTheOrphan(rig);
+            Assert.True(rig.Runner.IsBusy);
+            rig.Watch.Clock.Advance(TimeSpan.FromSeconds(61));
+            await rig.WaitForEnd("Alpha-1");
+
+            RunStatus run = rig.Watch.Status.Current.Runs["Alpha-1"];
+            Assert.Equal(RunStatus.Timeout, run.Result);
+            Assert.NotNull(run.EndedAt);
+            Assert.False(rig.Runner.IsBusy);
+            Assert.False(Directory.Exists(rig.Lock.Path));
+            Assert.Null(rig.Watch.Status.Current.UpdateLock);
+            Assert.Equal(before, rig.Watch.Status.Current.Login.State);
+            Assert.True(WatcherRig.IsRunning(orphan), "the orphan is still alive");
+
+            FakeClaude.SetStream(rig.Claude, Result());
+            Assert.True(rig.Runner.TryStart(Alpha1 with { Number = 2 }));
+            await rig.WaitForEnd("Alpha-2");
+            Assert.Equal(RunStatus.Ok, rig.Watch.Status.Current.Runs["Alpha-2"].Result);
+        }
+        finally
+        {
+            EndTheOrphan(rig);
+        }
+    }
+
+    [Fact]
+    public async Task Stop_WithAnOrphanHoldingThePipes_Returns_AndRecordsStopped()
+    {
+        using Rig rig = new();
+        try
+        {
+            FakeClaude.SetStream(rig.Claude, "#orphan", "#wait", Result());
+            string before = rig.Watch.Status.Current.Login.State;
+
+            Assert.True(rig.Runner.TryStart(Alpha1));
+            int orphan = await WaitForTheOrphan(rig);
+            // A guard, not a delay: the stop must come back long before this; a TimeoutException fails the test.
+            await rig.Runner.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+
+            RunStatus run = rig.Watch.Status.Current.Runs["Alpha-1"];
+            Assert.Equal(RunStatus.Stopped, run.Result);
+            Assert.NotNull(run.EndedAt);
+            Assert.False(rig.Runner.IsBusy);
+            Assert.False(Directory.Exists(rig.Lock.Path));
+            Assert.Equal(before, rig.Watch.Status.Current.Login.State);
+            Assert.True(WatcherRig.IsRunning(orphan), "the orphan is still alive");
+        }
+        finally
+        {
+            EndTheOrphan(rig);
+        }
+    }
+
+    [Fact]
+    public async Task Flood_WithAnOrphanHoldingThePipes_EndsAsOutputTooLarge()
+    {
+        using Rig rig = new();
+        try
+        {
+            FakeClaude.SetStream(rig.Claude, "#orphan", "#flood");
+
+            Assert.True(rig.Runner.TryStart(Alpha1));
+            await rig.WaitForEnd("Alpha-1");
+
+            RunStatus run = rig.Watch.Status.Current.Runs["Alpha-1"];
+            Assert.Equal(RunStatus.OutputTooLarge, run.Result);
+            Assert.NotNull(run.EndedAt);
+            Assert.False(Directory.Exists(rig.Lock.Path));
+            int orphan = await WaitForTheOrphan(rig);
+            Assert.True(WatcherRig.IsRunning(orphan), "the orphan is still alive");
+        }
+        finally
+        {
+            EndTheOrphan(rig);
+        }
+    }
+
+    [Fact]
+    public async Task Exit_WithAnOrphanHoldingThePipes_IsEndedByTheTimeout()
+    {
+        using Rig rig = new(TimeSpan.FromSeconds(60));
+        try
+        {
+            FakeClaude.SetStream(rig.Claude, "#orphan", Result());
+            FakeClaude.SetExit(rig.Claude, 0);
+
+            Assert.True(rig.Runner.TryStart(Alpha1));
+            int orphan = await WaitForTheOrphan(rig);
+            int pid = FakeClaude.StartedPid(rig.Claude)!.Value;
+            await WatcherRig.WaitFor(() => Task.FromResult(!WatcherRig.IsRunning(pid)), "the fake claude to exit");
+            Assert.True(rig.Runner.IsBusy);
+            rig.Watch.Clock.Advance(TimeSpan.FromSeconds(61));
+            await rig.WaitForEnd("Alpha-1");
+
+            RunStatus run = rig.Watch.Status.Current.Runs["Alpha-1"];
+            Assert.Equal(RunStatus.Timeout, run.Result);
+            Assert.NotNull(run.EndedAt);
+            Assert.False(Directory.Exists(rig.Lock.Path));
+            Assert.True(WatcherRig.IsRunning(orphan), "the orphan is still alive");
+        }
+        finally
+        {
+            EndTheOrphan(rig);
+        }
+    }
+
+    [Fact]
+    public async Task Timeout_WithAnOrphanAndAnAuthTextOnStderr_IsNoNeedsLogin()
+    {
+        using Rig rig = new(TimeSpan.FromSeconds(60));
+        try
+        {
+            FakeClaude.SetStream(rig.Claude, "#orphan", "#wait");
+            FakeClaude.SetStderr(rig.Claude, "Error: Not logged in. Run claude auth login.");
+            FakeClaude.SetExit(rig.Claude, 1);
+            string before = rig.Watch.Status.Current.Login.State;
+
+            Assert.True(rig.Runner.TryStart(Alpha1));
+            await WaitForTheOrphan(rig);
+            rig.Watch.Clock.Advance(TimeSpan.FromSeconds(61));
+            await rig.WaitForEnd("Alpha-1");
+
+            Assert.Equal(RunStatus.Timeout, rig.Watch.Status.Current.Runs["Alpha-1"].Result);
+            Assert.NotEqual(LoginStatus.NeedsLogin, rig.Watch.Status.Current.Login.State);
+            Assert.Equal(before, rig.Watch.Status.Current.Login.State);
+        }
+        finally
+        {
+            EndTheOrphan(rig);
+        }
+    }
+
+    [Fact]
+    public async Task StopAndDispose_AfterTheRunEnded_DoNotThrow()
+    {
+        using Rig rig = new();
+        FakeClaude.SetStream(rig.Claude, Result());
+
+        Assert.True(rig.Runner.TryStart(Alpha1));
+        await rig.WaitForEnd("Alpha-1");
+
+        Exception? stop = await Record.ExceptionAsync(() => rig.Runner.StopAsync(CancellationToken.None));
+        Exception? dispose = Record.Exception(rig.Runner.Dispose);
+        Assert.Null(stop);
+        Assert.Null(dispose);
+        Assert.Equal(RunStatus.Ok, rig.Watch.Status.Current.Runs["Alpha-1"].Result);
+    }
+
+    /// <summary>Waits until the grandchild of <c>#orphan</c> has written its pid and returns it.</summary>
+    private static async Task<int> WaitForTheOrphan(Rig rig)
+    {
+        await WatcherRig.WaitFor(() => Task.FromResult(FakeClaude.OrphanPid(rig.Claude) is not null),
+            "the orphan to write its pid");
+        return FakeClaude.OrphanPid(rig.Claude)!.Value;
+    }
+
+    /// <summary>Lets the orphan of <c>#orphan</c> exit and kills it by its pid, so no process outlives the
+    /// test.</summary>
+    private static void EndTheOrphan(Rig rig)
+    {
+        FakeClaude.ReleaseOrphan(rig.Claude);
+        if (FakeClaude.OrphanPid(rig.Claude) is not int pid)
+        {
+            return;
+        }
+
+        try
+        {
+            using Process process = Process.GetProcessById(pid);
+            process.Kill();
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException
+            or Win32Exception)
+        {
+            // Already gone.
         }
     }
 

@@ -11,8 +11,11 @@ namespace PRWatch.Tests;
 /// <c>started-pid</c> next to the script, atomically, so a test can see a process that has not read stdin yet),
 /// writes <c>stderr.txt</c> to stderr, prints <c>stream.jsonl</c> line by line and exits with the code in
 /// <c>exit-code</c> (0 without it). Those files sit next to the script. In the stream, the line <c>#wait</c> blocks
-/// until a <c>release</c> file appears next to the script (at most 120 s), and <c>#flood</c> prints junk lines until
-/// the process is killed.</summary>
+/// until a <c>release</c> file appears next to the script (at most 120 s), <c>#flood</c> prints junk lines until
+/// the process is killed, and <c>#orphan</c> double-forks a grandchild in a new session (so the tree kill does not
+/// reach it) that keeps stdout and stderr open, writes its pid to <c>orphan-pid</c> next to the script (atomically)
+/// and sleeps until a <c>release-orphan</c> file appears (at most 120 s); the fake goes on with the next line once
+/// <c>orphan-pid</c> is written.</summary>
 internal static class FakeClaude
 {
     private const UnixFileMode Private = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
@@ -48,6 +51,25 @@ internal static class FakeClaude
                     if raw == b"#wait":
                         deadline = time.time() + 120
                         while not os.path.exists(path("release")) and time.time() < deadline:
+                            time.sleep(0.02)
+                    elif raw == b"#orphan":
+                        out.flush()
+                        sys.stderr.flush()
+                        child = os.fork()
+                        if child == 0:
+                            os.setsid()
+                            if os.fork() != 0:
+                                os._exit(0)
+                            with open(path("orphan-pid.tmp"), "w", encoding="utf-8") as f:
+                                f.write(str(os.getpid()))
+                            os.replace(path("orphan-pid.tmp"), path("orphan-pid"))
+                            deadline = time.time() + 120
+                            while not os.path.exists(path("release-orphan")) and time.time() < deadline:
+                                time.sleep(0.02)
+                            os._exit(0)
+                        os.waitpid(child, 0)
+                        deadline = time.time() + 120
+                        while not os.path.exists(path("orphan-pid")) and time.time() < deadline:
                             time.sleep(0.02)
                     elif raw == b"#flood":
                         chunk = b"y" * 65535 + b"\n"
@@ -95,11 +117,28 @@ internal static class FakeClaude
         File.WriteAllText(Next(claude, "release"), "");
     }
 
+    /// <summary>Lets the grandchild of <c>#orphan</c> exit.</summary>
+    public static void ReleaseOrphan(string claude)
+    {
+        File.WriteAllText(Next(claude, "release-orphan"), "");
+    }
+
+    /// <summary>The pid in <c>orphan-pid</c> (written by the grandchild of <c>#orphan</c>), or <c>null</c> before
+    /// that.</summary>
+    public static int? OrphanPid(string claude)
+    {
+        return ReadPid(Next(claude, "orphan-pid"));
+    }
+
     /// <summary>The pid in <c>started-pid</c> (written by the fake as soon as it runs), or <c>null</c> before
     /// that.</summary>
     public static int? StartedPid(string claude)
     {
-        string file = Next(claude, "started-pid");
+        return ReadPid(Next(claude, "started-pid"));
+    }
+
+    private static int? ReadPid(string file)
+    {
         return File.Exists(file)
             && int.TryParse(File.ReadAllText(file), NumberStyles.None, CultureInfo.InvariantCulture, out int pid)
                 ? pid
