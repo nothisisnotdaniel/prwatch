@@ -330,8 +330,9 @@ internal static class PrWatchApp
         }
     }
 
-    /// <summary>At start, before the watcher, removes a <c>.update.lock</c> that holds PRWatch's marker (left by a
-    /// run that never reached its end, no run goes yet) and writes the lock's holder to the status when it changed. Any other
+    /// <summary>At start, before the watcher, removes a <c>.update.lock</c> that holds PRWatch's marker when the
+    /// marker's owner is no longer running (a run that never reached its end; a second instance never removes a
+    /// live run's lock) and writes the lock's holder to the status when it changed. Any other
     /// <c>.update.lock</c> is the updater's and stays.</summary>
     private sealed class UpdateLockCleaner : IHostedService
     {
@@ -347,7 +348,7 @@ internal static class PrWatchApp
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            updateLock.Release();
+            updateLock.ReleaseLeftBehind();
             string? holder = updateLock.Holder();
             if (status.Current.UpdateLock != holder)
             {
