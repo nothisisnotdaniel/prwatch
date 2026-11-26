@@ -4,9 +4,10 @@ namespace PRWatch;
 
 /// <summary>The watcher: while <c>enabled</c> is on it polls once at start and then every <c>pollMinutes</c> (read
 /// fresh each time, on the container's <see cref="TimeProvider"/>), and at once when <c>enabled</c> is turned on.
-/// Each poll (<see cref="PollOnceAsync"/>) stores the valid open PRs and the skipped projects in the status and
-/// hands at most one PR that needs a review to the <see cref="IReviewRunner"/>. The factory root is only read
-/// here: <c>job.py pr poll</c> and the <c>factory/jobs/*/state.json</c> files.</summary>
+/// Each poll (<see cref="PollOnceAsync"/>) stores the valid open PRs and the skipped projects of the allowed
+/// projects (<see cref="AllowedProjects"/>: <c>factory</c> is an ordinary choice there) in the status and hands
+/// at most one PR that needs a review to the <see cref="IReviewRunner"/>. The factory root is only read here:
+/// <c>job.py pr poll</c> and the <c>factory/jobs/*/state.json</c> files.</summary>
 internal sealed class Watcher : BackgroundService
 {
     public const long MaxStateBytes = 64 * 1024;
@@ -72,11 +73,7 @@ internal sealed class Watcher : BackgroundService
         DateTimeOffset now = time.GetUtcNow();
         FactoryInfo info = FactoryInfo.Read(root);
         HashSet<string> known = new(info.Projects, StringComparer.Ordinal);
-        HashSet<string> allowed = new(
-            info.Projects.Where(name => name == FactoryInfo.FactoryProject
-                || current.Projects is null
-                || current.Projects.Contains(name, StringComparer.Ordinal)),
-            StringComparer.Ordinal);
+        HashSet<string> allowed = AllowedProjects(info.Projects, current.Projects);
         JsonElement top = outcome.Output.RootElement;
         SortedSet<string> active = ActiveProjects(root, allowed);
         List<SkipStatus> skipped = ReadSkipped(top.GetProperty("skipped"), allowed);
@@ -117,6 +114,18 @@ internal sealed class Watcher : BackgroundService
         {
             runner.TryStart(pick);
         }
+    }
+
+    /// <summary>The projects a poll keeps PRs, picks, skips and active jobs of: every discovered project (the
+    /// factory's own <c>factory</c> included) when <paramref name="selected"/> is <c>null</c>, else only the
+    /// discovered projects named in it. <c>factory</c> has no special case: left out of the list, its PRs are
+    /// neither stored nor picked.</summary>
+    public static HashSet<string> AllowedProjects(IEnumerable<string> discovered, IReadOnlyList<string>? selected)
+    {
+        ArgumentNullException.ThrowIfNull(discovered);
+        return new HashSet<string>(
+            discovered.Where(name => selected is null || selected.Contains(name, StringComparer.Ordinal)),
+            StringComparer.Ordinal);
     }
 
     /// <summary>The first PR in <c>prs</c> order that needs a run now, or <c>null</c> (also while the brake
