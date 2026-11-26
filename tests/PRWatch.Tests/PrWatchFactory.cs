@@ -29,10 +29,6 @@ internal sealed class PrWatchFactory : WebApplicationFactory<Program>
     /// <summary>The token file the hosted app uses (created by RoomKit on start).</summary>
     public string TokenFile { get; }
 
-    /// <summary>The host arguments: WebApplicationFactory hands every host setting to <c>Program</c> as
-    /// <c>--key=value</c>.</summary>
-    public IReadOnlyList<string> Arguments => ["--TokenFile=" + TokenFile, "--environment=" + Environment];
-
     /// <summary>The stored token; call after the host has started (the first client does that).</summary>
     public string ReadToken()
     {
@@ -47,6 +43,7 @@ internal sealed class PrWatchFactory : WebApplicationFactory<Program>
         return client;
     }
 
+    /// <summary>WebApplicationFactory hands every host setting to <c>Program</c> as <c>--key=value</c>.</summary>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("TokenFile", TokenFile);

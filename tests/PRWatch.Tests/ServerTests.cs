@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -102,9 +103,8 @@ public sealed class ServerTests
         using HttpClient client = factory.CreateClient();
         using HttpResponseMessage response = await client.GetAsync("/health");
 
-        Assert.Equal(
-            ["--TokenFile=" + Path.Combine(factory.TempFolder, "PRWatch", "access-token"), "--environment=Production"],
-            factory.Arguments);
+        IConfiguration configuration = factory.Services.GetRequiredService<IConfiguration>();
+        Assert.Equal(Path.Combine(factory.TempFolder, "PRWatch", "access-token"), configuration["TokenFile"]);
         Assert.StartsWith(Path.GetTempPath(), factory.TokenFile, StringComparison.Ordinal);
         Assert.True(File.Exists(factory.TokenFile));
         Assert.NotEmpty(factory.ReadToken());
