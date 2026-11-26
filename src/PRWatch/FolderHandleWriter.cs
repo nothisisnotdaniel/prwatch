@@ -194,7 +194,7 @@ internal static class FolderHandleWriter
                 int total = 0;
                 while (total < buffer.Length)
                 {
-                    nint count = ReadBytes(file, buffer, total, buffer.Length - total);
+                    nint count = Read(file, ref buffer[total], buffer.Length - total);
                     if (count < 0)
                     {
                         if (Marshal.GetLastPInvokeError() == Eintr)
@@ -224,23 +224,6 @@ internal static class FolderHandleWriter
         {
             _ = Close(folder);
         }
-    }
-
-    private static nint ReadBytes(int file, byte[] buffer, int offset, int count)
-    {
-        if (offset == 0)
-        {
-            return Read(file, buffer, count);
-        }
-
-        byte[] rest = new byte[count];
-        nint read = Read(file, rest, count);
-        if (read > 0)
-        {
-            Array.Copy(rest, 0, buffer, offset, (int)read);
-        }
-
-        return read;
     }
 
     private static bool IsRegular(int folder, string name)
@@ -397,7 +380,7 @@ internal static class FolderHandleWriter
     private static extern nint WriteBytes(int file, byte[] bytes, nint count);
 
     [DllImport("libc", EntryPoint = "read", SetLastError = true)]
-    private static extern nint Read(int file, [Out] byte[] buffer, nint count);
+    private static extern nint Read(int file, ref byte buffer, nint count);
 
     [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
     private static extern int Fsync(int file);

@@ -275,7 +275,10 @@ internal sealed class UpdateLock
 
     /// <summary>True when the process <paramref name="owner"/> names is running and started at the recorded time. A
     /// process that exists but whose state or start time can't be read counts as alive: the lock is what stops a
-    /// swap mid-review, so the bias is to keep it.</summary>
+    /// swap mid-review, so the bias is to keep it. The check relies on <see cref="Process.StartTime"/> giving the
+    /// same ticks in every process: on macOS (the only install target) it comes from <c>proc_pidinfo</c>, exact to
+    /// the microsecond; on Linux .NET derives it from the boot time, so it could drift, and a drift would make a
+    /// live owner count as gone (the behaviour before job 461), never keep a lock for ever.</summary>
     private static bool IsAlive(Owner owner)
     {
         Process process;
