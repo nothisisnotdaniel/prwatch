@@ -7,6 +7,8 @@ namespace PRWatch.Tests;
 /// <summary><c>.github/workflows/release.yml</c> read as text, plus runs of
 /// <c>.github/scripts/release-version.sh</c> and of the release job's check and create steps, each in its own
 /// temp folder with only <c>PATH=/usr/bin:/bin</c> (and fakes) in its environment.</summary>
+/// <remarks>These tests need <c>/bin/bash</c> and Unix file modes, so they do not run on Windows. CI and releases
+/// run on macOS only.</remarks>
 public sealed class ReleaseWorkflowTests : IDisposable
 {
     private const string WorkflowPath = ".github/workflows/release.yml";
