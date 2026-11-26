@@ -7,6 +7,9 @@ namespace PRWatch.Tests;
 /// <summary>Runs CI's "Check the RoomKit package" step with <c>/bin/bash -e</c> in its own temp folder, with a fake
 /// <c>gh</c> (no network) and only <c>PATH</c>, <c>HOME</c>, <c>NUGET_PACKAGES</c> and <c>GH_TOKEN</c> in its
 /// environment, plus the step's jq filter run by the real <c>/usr/bin/jq</c> on a recorded <c>gh</c> result.</summary>
+/// <remarks>These tests need <c>/bin/bash</c>, <c>/usr/bin/jq</c> and Unix file modes (fake executables), so they do
+/// not run on Windows. CI and releases run on macOS only. Only the <c>File.SetUnixFileMode</c> calls are guarded by
+/// <c>OperatingSystem.IsWindows()</c>, so <c>/bin/bash</c> is still required.</remarks>
 public sealed class RoomKitCheckStepTests : IDisposable
 {
     private const string Version = "1.2.3";
