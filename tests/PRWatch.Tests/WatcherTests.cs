@@ -536,7 +536,7 @@ public sealed class WatcherTests
     }
 
     [Fact]
-    public async Task Production_RegistersTheNullRunner_WhichStartsNothing()
+    public async Task Production_RegistersTheClaudeRunner_WhichStartsNothingWhileDisabled()
     {
         using PrWatchFactory factory = new();
         using HttpClient client = factory.CreateClient();
@@ -544,7 +544,7 @@ public sealed class WatcherTests
 
         IReviewRunner runner = factory.Services.GetRequiredService<IReviewRunner>();
 
-        Assert.IsType<NullReviewRunner>(runner);
+        Assert.IsType<ClaudeReviewRunner>(runner);
         Assert.False(runner.IsBusy);
         Assert.False(runner.TryStart(new ReviewPick("Alpha", 1, Sha, true, null)));
     }

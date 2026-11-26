@@ -45,7 +45,8 @@ internal sealed class Watcher : BackgroundService
         settings.Changed += OnSettingsChanged;
     }
 
-    /// <summary>Polls once, stores the PRs, the skipped projects and the pick, and hands the pick to the runner.
+    /// <summary>Polls once, stores the PRs, the skipped projects, the pick and <c>login.expiresSoon</c>, and hands
+    /// the pick to the runner (which writes the run's start).
     /// A failed poll records its code and keeps <c>prs</c> and <c>lastPoll</c>; nothing is picked then.</summary>
     public async Task PollOnceAsync(CancellationToken cancellationToken)
     {
@@ -84,6 +85,10 @@ internal sealed class Watcher : BackgroundService
             Status next = previous with
             {
                 LastPoll = now,
+                Login = previous.Login with
+                {
+                    ExpiresSoon = LoginStatus.IsExpiringSoon(previous.Login.CredentialExpiresAt, now),
+                },
                 Prs = prs,
                 Skipped = skipped,
                 Runs = previous.Runs.RemoveRange(
@@ -102,13 +107,9 @@ internal sealed class Watcher : BackgroundService
             };
         });
 
-        if (pick is not null && runner.TryStart(pick))
+        if (pick is not null)
         {
-            string key = PrRules.RunKey(pick.Project, pick.Number);
-            status.Update(previous => previous with
-            {
-                Runs = previous.Runs.SetItem(key, new RunStatus { HeadSha = pick.HeadSha, StartedAt = now }),
-            });
+            runner.TryStart(pick);
         }
     }
 
