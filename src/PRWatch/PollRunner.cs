@@ -57,14 +57,21 @@ internal sealed class PollRunner
 
     private readonly string searchPath;
 
-    public PollRunner(TimeSpan timeout, string searchPath = FixedPath)
+    private readonly TimeProvider time;
+
+    public PollRunner(TimeSpan timeout, string searchPath = FixedPath, TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(searchPath);
         Timeout = timeout;
         this.searchPath = searchPath;
+        this.time = time ?? TimeProvider.System;
     }
 
     public TimeSpan Timeout { get; }
+
+    /// <summary>Test-only: awaited with the timeout token after the process has exited and both pipes are settled,
+    /// before the outcome is decided. Always <c>null</c> in production; never set from config or a request.</summary>
+    internal Func<CancellationToken, Task>? AfterExit { get; init; }
 
     /// <summary>A runner with the timeout from the config value <c>PollTimeoutSeconds</c> (default 120).</summary>
     public static PollRunner FromConfiguration(IConfiguration configuration)
@@ -131,6 +138,9 @@ internal sealed class PollRunner
 
         start.Environment["PATH"] = FixedPath;
 
+        // The timeout is armed before the start, so it is running by the time the poll can do anything.
+        using CancellationTokenSource timeout = new(Timeout, time);
+        using CancellationTokenSource reads = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         using Process process = new() { StartInfo = start };
         try
         {
@@ -145,12 +155,24 @@ internal sealed class PollRunner
         }
 
         process.StandardInput.Close();
-        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        using CancellationTokenRegistration killer = timeout.Token.Register(() => Kill(process));
-        timeout.CancelAfter(Timeout);
-        Task<byte[]?> output = ReadCapped(process.StandardOutput.BaseStream, MaxOutputBytes, timeout.Token);
-        Task error = Drain(process.StandardError.BaseStream, MaxErrorBytes, timeout.Token);
+
+        // Only a process the timeout found still running counts as killed by it. A process that exits between the
+        // check and the kill still counts, which is the fail-safe side.
+        int killedByTimeout = 0;
+        using CancellationTokenRegistration timeoutKiller = timeout.Token.Register(() =>
+        {
+            if (!HasExited(process))
+            {
+                Volatile.Write(ref killedByTimeout, 1);
+            }
+
+            Kill(process);
+        });
+        using CancellationTokenRegistration callerKiller = cancellationToken.Register(() => Kill(process));
+        Task<byte[]?> output = ReadCapped(process.StandardOutput.BaseStream, MaxOutputBytes, reads.Token);
+        Task error = Drain(process.StandardError.BaseStream, MaxErrorBytes, reads.Token);
         byte[]? bytes = await Settle(output);
+        bool readToEnd = output.IsCompletedSuccessfully;
         if (bytes is null)
         {
             Kill(process);
@@ -158,8 +180,13 @@ internal sealed class PollRunner
 
         await Settle(error);
         await process.WaitForExitAsync(CancellationToken.None);
+        if (AfterExit is { } afterExit)
+        {
+            await afterExit(timeout.Token);
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
-        if (timeout.IsCancellationRequested)
+        if (Volatile.Read(ref killedByTimeout) == 1 || (!readToEnd && timeout.IsCancellationRequested))
         {
             return PollOutcome.Failed(StatusError.PollTimeout);
         }
@@ -227,6 +254,19 @@ internal sealed class PollRunner
         }
 
         return PollOutcome.Ok(document);
+    }
+
+    /// <summary>True once the process has exited; <c>false</c> when that cannot be told.</summary>
+    private static bool HasExited(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+        {
+            return false;
+        }
     }
 
     private static void Kill(Process process)
