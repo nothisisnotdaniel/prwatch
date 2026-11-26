@@ -35,7 +35,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [?] [#27](backlog/027-check-the-tap-area-of-the.md) Check the tap area of the on/off switch on the iPhone
 - [ ] [#28](backlog/028-drop-the-unneeded-checkout-in-the.md) Drop the unneeded checkout in the release job
 - [ ] [#29](backlog/029-verify-the-release-tarball-independently-of.md) Verify the release tarball independently of the build job's hash
-- [?] [#30](backlog/030-tidy-the-publish-output-flag-in.md) Tidy the publish output flag in release.yml
+- [ ] [#30](backlog/030-tidy-the-publish-output-flag-in.md) Tidy the publish output flag in release.yml
 - [?] [#31](backlog/031-keep-a-live-review-s-update.md) Keep a live review's update lock when a second instance starts
 - [?] [#32](backlog/032-note-why-the-roomkit-feed-tests.md) Note why the RoomKit feed tests need bash
 - [?] [#33](backlog/033-tighten-the-roomkit-attestation-check-against.md) Tighten the RoomKit attestation check against same-repo PR attestations
