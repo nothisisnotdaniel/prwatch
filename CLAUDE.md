@@ -12,8 +12,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
 - **Stack:** .NET 10 ASP.NET Core minimal API on the **RoomKit core only** (the `RoomKit` NuGet package from
   ControlRoom's releases, restored from the local feed `~/Library/Application Support/RoomKit/feed` named in
   `nuget.config`; see `ControlRoom/docs/roomkit.md`). No `FactoryModule`, no `IJobFormat`: `Program.cs` is
-  `return RoomKitApp.Run(args, PrWatchApp.Options, PrWatchApp.Map);`. Plain HTML/CSS/JS in `wwwroot` (no CDN, no
-  build step, strict CSP), xUnit tests with `Microsoft.AspNetCore.Mvc.Testing`. No other package without a reason
+  `return RoomKitApp.Run(args, PrWatchApp.Options, PrWatchApp.Map, addServices: PrWatchApp.AddServices);`.
+  Plain HTML/CSS/JS in `wwwroot` (no CDN, no build step, strict CSP), xUnit tests with `Microsoft.AspNetCore.Mvc.Testing`. No other package without a reason
   in the spec.
 - **Names:** `AppName` "PRWatch", `ShortName` "PRWatch", `DataFolderName` "PRWatch", `SolutionFileName`
   `PRWatch.slnx`, `DefaultPort` **8101** (ControlRoom is 8100), `ReleaseRepository` `nothisisnotdaniel/prwatch`
