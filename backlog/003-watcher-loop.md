@@ -11,3 +11,7 @@ A hosted background loop that, while switched on, runs `python3 factory/tools/jo
 ## Why
 
 Polling costs no tokens; deciding in code when a review is due keeps runs rare and never collides with a factory job in the same checkout.
+
+## Notes
+
+From job 421 (review-security 2): when loading the status file, accept only `runs` keys that match `<repo>-<n>` (repo a known project or `factory`, n digits); drop or ignore any other key.

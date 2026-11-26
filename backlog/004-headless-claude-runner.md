@@ -15,3 +15,5 @@ This is the one place PRWatch spends tokens and the only automated `claude` star
 ## Notes
 
 High risk. Never `--dangerously-skip-permissions` or `--bare`. Needs factory #61 so the run can write only the reviewed PR's folder.
+
+From job 421 (review-security 1): settings accept `claudePath` as a symlink. Resolve it again right before each start, check the resolved target is an executable regular file, and run that resolved path, so a swapped link is caught.

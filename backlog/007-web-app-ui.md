@@ -11,3 +11,10 @@ The `wwwroot` app: PR list per project (title, author, trusted or not, stage, ro
 ## Why
 
 The taps are how the user gives consent and merges for untrusted authors; the status makes the brake and a needed login visible before reviews silently stop.
+
+## Notes
+
+From job 421:
+- Show the `_unknown` status value and the `settings_unreadable` error with fixed, plain texts (review-ux 1 and 2).
+- A `POST /api/settings` that changes other fields still fails while the stored `factoryRoot` is invalid; the form should say so and point at the `factoryRoot` field (review-code 1).
+- Before rendering, ignore `runs` keys that don't match `<repo>-<n>` (review-security 2).
