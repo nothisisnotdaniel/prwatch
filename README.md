@@ -16,15 +16,22 @@ package `RoomKit` on GitHub Packages (`https://nuget.pkg.github.com/nothisisnotd
 nuget.org. GitHub Packages needs a sign-in even to read, so set it up once on each Mac that builds PRWatch:
 
 1. Create a classic personal access token on GitHub with only the `read:packages` scope.
-2. Set it as an environment variable in your shell profile (for example `~/.zprofile`). It is never committed:
+2. Store it in your login keychain (the command asks for the token, so it stays out of your shell history):
 
    ```sh
-   export 'NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>'
+   security add-generic-password -s prwatch-github-packages -a <user> -w
    ```
 
-   `<user>` is your GitHub user name, `<token>` the token. Don't put it in `nuget.config` or any other file of
-   this repo.
-3. Open a new terminal and run `dotnet restore`.
+   `<user>` is your GitHub user name. Or put the single line `<user>:<token>` into
+   `~/Library/Application Support/PRWatch/github-packages` and `chmod 600` it. The token is never committed: don't
+   put it in `nuget.config` or any other file of this repo.
+3. Run `scripts/restore.sh` once, before `dotnet build` or `dotnet test`, and again after a RoomKit version bump.
+   It sets `NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>` for that one `dotnet restore`
+   only. After that, build and test take RoomKit from `~/.nuget/packages` and need no token.
+
+Never export the PAT globally (for example `export NuGetPackageSourceCredentials_github=...` in `~/.zprofile`):
+every process started from that shell would inherit it, including the factory's `/factory pr` test runs of
+untrusted PR code.
 
 CI does not need a token of yours: it uses `GITHUB_TOKEN` only on the `Restore` steps, in jobs that have just
 `contents: read` and `packages: read`. The step after it, "Check the RoomKit package", checks the restored package

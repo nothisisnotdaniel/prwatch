@@ -25,11 +25,14 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
   they build a temporary factory root with a fake `factory/tools/job.py` and a fake `claude` script on a test
   `PATH`, and host the app in memory. The in-memory harness is `tests/PRWatch.Tests/PrWatchFactory.cs` (own temp
   folder, `--TokenFile=<temp>/PRWatch/access-token`, `--environment=Production`, `Host: 127.0.0.1:8101`).
-  Before the first restore on a Mac, set up GitHub Packages once (README "RoomKit"): a classic PAT with only
-  `read:packages`, set as `NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>` in your shell
-  profile, never committed (no `packageSourceCredentials` in `nuget.config`). CI uses `GITHUB_TOKEN` only on the
-  `Restore` steps (jobs with just `contents: read` and `packages: read`); the next step, "Check the RoomKit package",
-  reads the version pinned in `src/PRWatch/PRWatch.csproj` (`Version="[x.y.z]"`), checks the restored
+  Before the first `dotnet build` or `dotnet test` on a Mac (and after a RoomKit version bump), run
+  `scripts/restore.sh` once (README "RoomKit"). It reads a classic PAT with only `read:packages` from the keychain
+  (service `prwatch-github-packages`) or from `~/Library/Application Support/PRWatch/github-packages` (0600) and sets
+  `NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>` for that one `dotnet restore` only. The PAT
+  is never committed (no `packageSourceCredentials` in `nuget.config`) and never exported globally: a shell
+  profile export would hand it to every process, including `/factory pr` test runs of untrusted PR code. CI uses
+  `GITHUB_TOKEN` only on the `Restore` steps (jobs with just `contents: read` and `packages: read`); the next step,
+  "Check the RoomKit package", reads the version pinned in `src/PRWatch/PRWatch.csproj` (`Version="[x.y.z]"`), checks the restored
   `roomkit.<v>.nupkg` against `roomkit.sha256` and its build-provenance attestation from roomkit's `release.yml` on
   `refs/heads/main` (a merged pull request, GitHub-hosted runner) before any build. A RoomKit version bump changes the
   csproj and `roomkit.sha256` in the same commit.
@@ -99,6 +102,7 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     `exit-code`. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
     `RunTimeoutSeconds` (default 3600).
   - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`).
+  - `scripts/restore.sh` (0755, PRWatch's own): the local restore with the PAT scoped to it (`RestoreScriptTests`).
   - `scripts/launch-agent.sh`, `scripts/updater.sh` (0755): RoomKit's copies of the pinned package; change only
     the block between `# roomkit:app-begin` and `# roomkit:app-end` (`ScriptTests` pins both). Install at login
     with auto-update, from `PRWatch/`: `scripts/launch-agent.sh install --release [--tailnet-host <host>]`. The

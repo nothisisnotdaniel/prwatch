@@ -214,6 +214,14 @@ public sealed class ProjectFilesTests
         Assert.Contains("classic", text, StringComparison.Ordinal);
         Assert.Contains("NuGetPackageSourceCredentials_github=Username=<user>;Password=<token>", text, StringComparison.Ordinal);
         Assert.Contains("never committed", text, StringComparison.Ordinal);
+        Assert.Contains("`scripts/restore.sh`", text, StringComparison.Ordinal);
+        Assert.Contains("prwatch-github-packages", text, StringComparison.Ordinal);
+        Assert.Contains("~/Library/Application Support/PRWatch/github-packages", text, StringComparison.Ordinal);
+        Assert.Contains("never export", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("untrusted PR code", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("export NuGetPackageSourceCredentials_github='", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("export NuGetPackageSourceCredentials_github=Username", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("export 'NuGetPackageSourceCredentials_github", text, StringComparison.Ordinal);
         Assert.Contains("`GITHUB_TOKEN`", text, StringComparison.Ordinal);
         Assert.Contains("`Restore`", text, StringComparison.Ordinal);
         Assert.Contains("`roomkit.sha256` in the same commit", text, StringComparison.Ordinal);
