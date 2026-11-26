@@ -12,7 +12,7 @@ internal sealed record PrRequest(string Action, string Project, int Number, stri
 
 /// <summary>Checks a <c>review</c>, <c>merge</c> or <c>cancel</c> body and writes
 /// <c>factory/prs/&lt;repo&gt;-&lt;n&gt;/request.json</c> (<c>{"action","headSha","consent"}</c>, <c>0600</c>)
-/// atomically through <see cref="SafeFileWriter"/>: never through a symlink, only directly inside
+/// atomically through no-follow folder descriptors (<see cref="FolderHandleWriter"/>): never through a symlink, only directly inside
 /// <c>&lt;root&gt;/factory/prs/</c>, missing folders created as <c>0700</c>. Only the checked number and the
 /// project matched against the discovered list shape the path.</summary>
 internal static class RequestWriter
@@ -28,10 +28,6 @@ internal static class RequestWriter
     public const string Merge = "merge";
 
     public const string Cancel = "cancel";
-
-    private const UnixFileMode PrivateFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-
-    private const UnixFileMode PrivateFolder = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
 
     private static readonly string[] BaseKeys = ["project", "number", "headSha"];
 
@@ -129,49 +125,38 @@ internal static class RequestWriter
         return Path.Combine(root, "factory", "prs", FolderName(request), FileName);
     }
 
-    /// <summary>Writes the request file; <c>false</c> (nothing written, no link's target changed) when
-    /// <c>factory/</c>, <c>factory/prs/</c>, the PR folder or the file is a symlink, when the folder is not
-    /// directly inside <c>&lt;root&gt;/factory/prs/</c> or when the write throws.</summary>
+    /// <summary>Test-only: called with <c>"folders-open"</c> once every folder is open and with
+    /// <c>"before-rename"</c> once the temp file is written. Null in production.</summary>
+    internal static Action<string>? BeforeStep { get; set; }
+
+    /// <summary>Test-only: <c>false</c> makes <see cref="Write"/> act as on an unsupported platform. Null in
+    /// production, where the OS and architecture decide.</summary>
+    internal static bool? PlatformSupportedOverride { get; set; }
+
+    /// <summary>Writes the request file through no-follow folder descriptors (<see cref="FolderHandleWriter"/>), so
+    /// a symlink swapped in at any path component during the write can't redirect it; <c>false</c> (nothing
+    /// written, no link's target changed) when <c>factory/</c>, <c>factory/prs/</c>, the PR folder or the file is a
+    /// symlink, when the folder name is not a single component directly inside <c>&lt;root&gt;/factory/prs/</c>,
+    /// on a platform other than macOS or Linux glibc x64/arm64, or when the write fails.</summary>
     public static bool Write(string root, PrRequest request)
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(request);
         byte[] bytes = FileBytes(request);
-        if (bytes.Length > MaxFileBytes)
+        if (bytes.Length > MaxFileBytes || !(PlatformSupportedOverride ?? FolderHandleWriter.IsSupported))
+        {
+            return false;
+        }
+
+        string name = FolderName(request);
+        if (!IsSingleComponent(name))
         {
             return false;
         }
 
         try
         {
-            string factory = Path.GetFullPath(Path.Combine(root, "factory"));
-            string prs = Path.Combine(factory, "prs");
-            string name = FolderName(request);
-            string folder = Path.GetFullPath(Path.Combine(prs, name));
-            if (!string.Equals(Path.GetDirectoryName(folder), prs, StringComparison.Ordinal)
-                || !string.Equals(Path.GetFileName(folder), name, StringComparison.Ordinal)
-                || !IsPlainFolder(factory)
-                || !EnsureFolder(prs)
-                || !EnsureFolder(folder))
-            {
-                return false;
-            }
-
-            string file = Path.Combine(folder, FileName);
-            FileInfo target = new(file);
-            if (target.LinkTarget is not null || Directory.Exists(file))
-            {
-                return false;
-            }
-
-            if (!OperatingSystem.IsWindows() && target.Exists && File.GetUnixFileMode(file) != PrivateFile)
-            {
-                // SafeFileWriter keeps an existing file's mode; a request file is always 0600.
-                SafeFileWriter.Delete(file);
-            }
-
-            PrivateFileWriter.Write(file, bytes);
-            return true;
+            return FolderHandleWriter.Write(root, ["factory"], ["prs", name], FileName, bytes, BeforeStep);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -180,40 +165,16 @@ internal static class RequestWriter
         }
     }
 
+    /// <summary>True for a name that is one path component: not empty, <c>.</c> or <c>..</c>, without <c>/</c>
+    /// or NUL.</summary>
+    private static bool IsSingleComponent(string name)
+    {
+        return name.Length > 0 && name != "." && name != ".." && !name.Contains('/', StringComparison.Ordinal)
+            && !name.Contains('\0', StringComparison.Ordinal);
+    }
+
     private static string FolderName(PrRequest request)
     {
         return request.Project + "-" + request.Number.ToString(CultureInfo.InvariantCulture);
-    }
-
-    /// <summary>True for an existing folder that is not a symlink.</summary>
-    private static bool IsPlainFolder(string path)
-    {
-        DirectoryInfo info = new(path);
-        return info.LinkTarget is null && info.Exists;
-    }
-
-    /// <summary>Creates a missing folder as <c>0700</c>; true when the folder then exists and is not a
-    /// symlink.</summary>
-    private static bool EnsureFolder(string path)
-    {
-        DirectoryInfo info = new(path);
-        if (info.LinkTarget is not null || File.Exists(path))
-        {
-            return false;
-        }
-
-        if (!info.Exists)
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                Directory.CreateDirectory(path);
-            }
-            else
-            {
-                Directory.CreateDirectory(path, PrivateFolder);
-            }
-        }
-
-        return IsPlainFolder(path);
     }
 }
