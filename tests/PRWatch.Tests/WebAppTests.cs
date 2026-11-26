@@ -264,11 +264,65 @@ public sealed partial class WebAppTests
         Assert.Contains(
             "const confirm = action === \"consent\" ? Texts.confirmConsent : action === \"merge\" ? Texts.confirmMerge : \"\";",
             app, StringComparison.Ordinal);
-        Assert.Contains("if (confirm && button.dataset.armed !== \"yes\") {", app, StringComparison.Ordinal);
+        Assert.Contains("if (!armedFor(action, pr)) {", app, StringComparison.Ordinal);
         Assert.Contains("button.textContent = confirm + head;", app, StringComparison.Ordinal);
         Match tap = new Regex(@"async function tap\(action, pr\) \{(?<body>.*?)\n\}", RegexOptions.Singleline).Match(app);
         Assert.True(tap.Success);
         Assert.EndsWith("await refresh();", tap.Groups["body"].Value.TrimEnd(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AppJs_ArmsOneConsentOrMergeButton_ForArmSeconds()
+    {
+        string app = RepoFiles.Read("src/PRWatch/wwwroot/app.js");
+        string button = Body(app, "function actionButton(action, pr)");
+
+        // AC-1: one constant, one armed state, and arming replaces the earlier one.
+        Assert.Single(Regex.Matches(app, @"const ArmSeconds = 5;"));
+        Assert.Single(Regex.Matches(app, @"let armed = null;"));
+        Assert.Matches(new Regex(
+            @"disarm\(\);\s*armed = \{ project: pr\.project, number: pr\.number, action: action, headSha: pr\.headSha,"
+            + @"\s*until: Date\.now\(\) \+ ArmSeconds \* 1000 \};"), button);
+
+        // AC-2: a timer of ArmSeconds disarms, and the disarm draws the button unarmed.
+        Assert.Contains("armTimer = setTimeout(disarm, ArmSeconds * 1000);", button, StringComparison.Ordinal);
+        string disarm = Body(app, "function disarm()");
+        Assert.Contains("clearTimeout(armTimer);", disarm, StringComparison.Ordinal);
+        Assert.Contains("armedButton.isConnected", disarm, StringComparison.Ordinal);
+        Assert.Contains("armedButton.classList.remove(\"armed\");", disarm, StringComparison.Ordinal);
+        Assert.Contains("delete armedButton.dataset.armed;", disarm, StringComparison.Ordinal);
+        Assert.Contains("armedButton.textContent = label + \" · \" + head;", disarm, StringComparison.Ordinal);
+        Assert.Contains("const head = shortSha(armed.headSha);", disarm, StringComparison.Ordinal);
+        Assert.EndsWith("armed = null;\n  armedButton = null;", disarm.TrimEnd(), StringComparison.Ordinal);
+
+        // AC-3: the second tap sends only on a match of all four fields inside the window, and clears the state first.
+        Assert.Equal(
+            "return armed !== null && armed.project === pr.project && armed.number === pr.number && armed.action === action;",
+            Body(app, "function armedForPr(action, pr)").Trim());
+        Assert.Equal(
+            "return armedForPr(action, pr) && armed.headSha === pr.headSha && Date.now() < armed.until;",
+            Body(app, "function armedFor(action, pr)").Trim());
+        Assert.Contains(
+            "      return;\n    }\n    armed = null;\n    armedButton = null;\n    clearTimeout(armTimer);\n    armTimer = null;\n"
+            + "    button.disabled = true;\n    tap(action, pr);\n  });",
+            button, StringComparison.Ordinal);
+
+        // AC-4: a redraw inside the window draws the matching button armed; another head clears the state.
+        Assert.Contains(
+            "if (confirm && armedFor(action, pr)) {\n    // A refresh inside the armed window draws the button armed again.\n"
+            + "    button.dataset.armed = \"yes\";\n    button.classList.add(\"armed\");\n"
+            + "    button.textContent = confirm + head;\n    armedButton = button;\n"
+            + "  } else if (confirm && armedForPr(action, pr)) {\n", button, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"\} else if \(confirm && armedForPr\(action, pr\)\) \{\n\s*//[^\n]*\n\s*disarm\(\);\n  \}"),
+            button);
+
+        // AC-6: Cancel sends on one tap and never arms.
+        Assert.Contains(
+            "if (confirm === \"\") {\n      button.disabled = true;\n      tap(action, pr);\n      return;\n    }", button,
+            StringComparison.Ordinal);
+        Assert.True(button.IndexOf("if (confirm === \"\")", StringComparison.Ordinal)
+            < button.IndexOf("armed = {", StringComparison.Ordinal));
+        Assert.Single(Regex.Matches(app, @"armed = \{"));
     }
 
     [Fact]
@@ -367,7 +421,7 @@ public sealed partial class WebAppTests
         Assert.True(handler.Success);
         Assert.Equal(
             "if (document.visibilityState === \"visible\") {\n    refresh();\n    startRefresh();\n  } else {\n"
-            + "    stopRefresh();\n  }",
+            + "    stopRefresh();\n    disarm();\n  }",
             handler.Groups["body"].Value.Trim());
         Assert.Contains("clearInterval(refreshTimer);", app, StringComparison.Ordinal);
     }
@@ -439,6 +493,13 @@ public sealed partial class WebAppTests
         Match list = ShellList().Match(room);
         Assert.True(list.Success);
         return [.. QuotedString().Matches(list.Groups["body"].Value).Select(match => match.Groups["value"].Value)];
+    }
+
+    private static string Body(string source, string signature)
+    {
+        Match match = new Regex(Regex.Escape(signature) + @" \{(?<body>.*?)\n\}", RegexOptions.Singleline).Match(source);
+        Assert.True(match.Success, signature);
+        return match.Groups["body"].Value;
     }
 
     [GeneratedRegex("<script[^>]*>[^<]*</script>")]
