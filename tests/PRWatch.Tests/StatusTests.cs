@@ -186,6 +186,62 @@ public sealed class StatusTests
     }
 
     [Fact]
+    public void OldShapeFile_WithoutStageTestsOrMergeable_LoadsWithNulls()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-status-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "status.json"),
+                "{\"lastPoll\":\"2026-11-26T09:00:00.000Z\",\"prs\":[{\"project\":\"Alpha\",\"number\":4,"
+                + "\"title\":\"T\",\"author\":\"a\",\"url\":null,\"headSha\":\"" + new string('a', 40) + "\","
+                + "\"headSeenAt\":\"2026-11-26T08:00:00.000Z\",\"trusted\":false,\"request\":null,"
+                + "\"round\":{\"k\":1,\"headSha\":\"" + new string('a', 40) + "\",\"current\":true,\"clean\":false}}]}");
+
+            Status loaded = new StatusStore(folder, new FakeClock(FakeClock.DefaultNow)).Current;
+
+            PrStatus pr = Assert.Single(loaded.Prs);
+            Assert.Equal(4, pr.Number);
+            Assert.Null(pr.Stage);
+            Assert.NotNull(pr.Round);
+            Assert.Null(pr.Round.Tests);
+            Assert.Null(pr.Round.Mergeable);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("\"stage\":\"open\"", "")]
+    [InlineData("", ",\"tests\":\"skipped\"")]
+    public void StoredPrs_WithAnUnknownStageOrTests_LoadAsEmpty(string stage, string tests)
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-status-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string head = new('a', 40);
+            File.WriteAllText(Path.Combine(folder, "status.json"),
+                "{\"lastPoll\":\"2026-11-26T09:00:00.000Z\",\"prs\":[{\"project\":\"Alpha\",\"number\":4,"
+                + "\"title\":\"T\",\"author\":\"a\",\"url\":null,\"headSha\":\"" + head + "\","
+                + "\"headSeenAt\":\"2026-11-26T08:00:00.000Z\",\"trusted\":false,\"request\":null,"
+                + (stage.Length > 0 ? stage + "," : "")
+                + "\"round\":{\"k\":1,\"headSha\":\"" + head + "\",\"current\":true,\"clean\":false" + tests + "}}]}");
+
+            Status loaded = new StatusStore(folder, new FakeClock(FakeClock.DefaultNow)).Current;
+
+            Assert.Empty(loaded.Prs);
+            Assert.Equal(FakeClock.DefaultNow.AddHours(-1), loaded.LastPoll);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Store_KeepsRunKeysInOrdinalOrder()
     {
         string folder = Path.Combine(Path.GetTempPath(), "prwatch-status-" + Guid.NewGuid().ToString("N"));

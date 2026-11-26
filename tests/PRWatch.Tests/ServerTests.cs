@@ -112,6 +112,30 @@ public sealed class ServerTests
     }
 
     [Fact]
+    public async Task PostSettings_OfAnotherField_WithAnInvalidStoredFactoryRoot_Is400NamingFactoryRoot()
+    {
+        using PrWatchFactory factory = new();
+        factory.FactoryRoot = Path.Combine(factory.TempFolder, "missing-root");
+        using (HttpClient anonymous = factory.CreateClient())
+        {
+            using HttpResponseMessage health = await anonymous.GetAsync("/health");
+            Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        }
+
+        using HttpClient client = factory.CreateTokenClient();
+        using StringContent body = new("{\"pollMinutes\": 6}", System.Text.Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await client.PostAsync("/api/settings", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using System.Text.Json.JsonDocument error =
+            System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("invalid_settings", error.RootElement.GetProperty("error").GetString());
+        Assert.Contains("factoryRoot",
+            error.RootElement.GetProperty("fields").EnumerateArray().Select(field => field.GetString()));
+    }
+
+    [Fact]
     public void Tests_NeverPostTheUpdateSettings()
     {
         // The update settings route would reach GitHub; no test may call it.

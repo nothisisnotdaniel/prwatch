@@ -246,7 +246,12 @@ public sealed class WatcherTests
         PrStatus factory = status.Prs[4];
         Assert.Equal("", factory.Title);
         Assert.Equal("", factory.Author);
-        Assert.Equal(new RoundStatus { K = 2, HeadSha = WatcherRig.ShaB, Current = false, Clean = false }, factory.Round);
+        Assert.Equal(
+            new RoundStatus
+            {
+                K = 2, HeadSha = WatcherRig.ShaB, Current = false, Clean = false, Tests = "pass", Mergeable = true,
+            },
+            factory.Round);
         Assert.Equal(rig.Clock.GetUtcNow(), factory.HeadSeenAt);
         Assert.True(factory.Trusted);
     }
@@ -863,6 +868,89 @@ public sealed class WatcherTests
 
         Assert.Equal(new BrakeStatus(), rig.Status.Current.Brake);
         Assert.Single(rig.Runner.Calls);
+    }
+
+    // --- job 426: stage, tests and mergeable ---------------------------------------------------
+
+    [Theory]
+    [InlineData("\"review\"", "review")]
+    [InlineData("\"merged\"", "merged")]
+    [InlineData("\"closed\"", "closed")]
+    [InlineData("\"open\"", null)]
+    [InlineData("\"REVIEW\"", null)]
+    [InlineData("5", null)]
+    [InlineData("null", null)]
+    public async Task Poll_KeepsAKnownStage_ElseNull(string stage, string? expected)
+    {
+        using WatcherRig rig = new();
+        JsonObject pr = WatcherRig.Pr("Alpha", 1);
+        pr["stage"] = JsonNode.Parse(stage);
+        rig.Output([pr]);
+
+        await rig.Poll();
+
+        Assert.Equal(rig.Clock.GetUtcNow(), rig.Status.Current.LastPoll);
+        Assert.Equal(expected, Assert.Single(rig.Status.Current.Prs).Stage);
+    }
+
+    [Theory]
+    [InlineData("\"pass\"", "pass", "true", true)]
+    [InlineData("\"fail\"", "fail", "false", false)]
+    [InlineData("\"none\"", "none", "null", null)]
+    [InlineData("\"skipped\"", null, "\"yes\"", null)]
+    [InlineData("1", null, "1", null)]
+    [InlineData("null", null, "null", null)]
+    public async Task Poll_KeepsKnownTestsAndABoolMergeable_ElseNull(string tests, string? expectedTests,
+        string mergeable, bool? expectedMergeable)
+    {
+        using WatcherRig rig = new();
+        JsonObject round = WatcherRig.Round(2, Sha, current: true, clean: true);
+        round["tests"] = JsonNode.Parse(tests);
+        round["mergeable"] = JsonNode.Parse(mergeable);
+        rig.Output([WatcherRig.Pr("Alpha", 1, round: round)]);
+
+        await rig.Poll();
+
+        Assert.Equal(rig.Clock.GetUtcNow(), rig.Status.Current.LastPoll);
+        RoundStatus stored = Assert.Single(rig.Status.Current.Prs).Round!;
+        Assert.Equal(expectedTests, stored.Tests);
+        Assert.Equal(expectedMergeable, stored.Mergeable);
+    }
+
+    [Fact]
+    public async Task Poll_RoundWithoutTestsOrMergeableKeys_StoresNull()
+    {
+        using WatcherRig rig = new();
+        JsonObject round = WatcherRig.Round(1, Sha, current: false);
+        round.Remove("tests");
+        round.Remove("mergeable");
+        JsonObject pr = WatcherRig.Pr("Alpha", 1, round: round);
+        pr.Remove("stage");
+        rig.Output([pr]);
+
+        await rig.Poll();
+
+        PrStatus stored = Assert.Single(rig.Status.Current.Prs);
+        Assert.Null(stored.Stage);
+        Assert.Null(stored.Round!.Tests);
+        Assert.Null(stored.Round.Mergeable);
+    }
+
+    [Fact]
+    public async Task Poll_StoredStageTestsAndMergeable_SurviveARestart()
+    {
+        using WatcherRig rig = new();
+        JsonObject pr = WatcherRig.Pr("Alpha", 1, round: WatcherRig.Round(3, Sha, current: true, clean: true));
+        pr["stage"] = "review";
+        rig.Output([pr]);
+        await rig.Poll();
+
+        rig.Open();
+
+        PrStatus stored = Assert.Single(rig.Status.Current.Prs);
+        Assert.Equal("review", stored.Stage);
+        Assert.Equal("pass", stored.Round!.Tests);
+        Assert.True(stored.Round.Mergeable);
     }
 
     // --- helpers ---------------------------------------------------------------------------------

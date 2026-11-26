@@ -1,0 +1,257 @@
+/* PRWatch's own styles on top of RoomKit's app.css: iPhone width first, light and dark, 44px tap targets. */
+
+:root {
+  --pr-warn-bg: #fff1cc;
+  --pr-warn-fg: #7a4a00;
+  --pr-good-fg: #14632f;
+  --pr-trusted-bg: #dff3e6;
+  --pr-trusted-fg: #14632f;
+  --pr-untrusted-bg: #fde6cf;
+  --pr-untrusted-fg: #8a3d00;
+  --pr-armed-bg: #b3132b;
+  --pr-armed-fg: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pr-warn-bg: #3d2e00;
+    --pr-warn-fg: #ffd36b;
+    --pr-good-fg: #6fd08f;
+    --pr-trusted-bg: #12361f;
+    --pr-trusted-fg: #8fe0aa;
+    --pr-untrusted-bg: #3d2410;
+    --pr-untrusted-fg: #ffb877;
+    --pr-armed-bg: #ff4d63;
+    --pr-armed-fg: #000000;
+  }
+}
+
+.status-bar {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.status-line {
+  margin: 4px 0;
+  font-size: 0.95rem;
+}
+
+.status-line.warn {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--pr-warn-bg);
+  color: var(--pr-warn-fg);
+}
+
+.status-skipped {
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  margin: 0 0 8px;
+}
+
+.switch-row label {
+  font-weight: 600;
+}
+
+.switch,
+.field-check input {
+  width: 28px;
+  height: 28px;
+  margin: 8px 0;
+  accent-color: var(--accent);
+}
+
+.pr-project h2 {
+  margin: 16px 0 8px;
+  font-size: 1.1rem;
+}
+
+.pr-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pr {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.pr p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.pr-head {
+  font-weight: 600;
+}
+
+.pr-link {
+  color: var(--link);
+}
+
+span.pr-link {
+  color: var(--fg);
+}
+
+.pr-meta,
+.pr-run,
+.pr-request {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.pr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+  font-size: 0.8rem;
+}
+
+.chip-trusted {
+  background: var(--pr-trusted-bg);
+  color: var(--pr-trusted-fg);
+}
+
+.chip-untrusted {
+  background: var(--pr-untrusted-bg);
+  color: var(--pr-untrusted-fg);
+}
+
+.pr-round {
+  font-size: 0.9rem;
+}
+
+.pr-round.good {
+  color: var(--pr-good-fg);
+}
+
+.pr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.action,
+.settings-form .primary {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+}
+
+.action-cancel {
+  border-color: var(--line);
+  color: var(--fg);
+}
+
+.action.armed {
+  border-color: var(--pr-armed-bg);
+  background: var(--pr-armed-bg);
+  color: var(--pr-armed-fg);
+}
+
+.action:disabled {
+  opacity: 0.5;
+}
+
+.settings {
+  margin: 20px 0 0;
+}
+
+.settings summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-form .primary {
+  width: 100%;
+  background: var(--accent);
+  color: var(--primary-fg);
+}
+
+.field {
+  margin: 0 0 14px;
+}
+
+.field label {
+  display: block;
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.field input[type="text"],
+.field input[type="number"],
+.field select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.field select[multiple] {
+  min-height: 120px;
+}
+
+.field-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.field-check label {
+  display: inline;
+  margin: 0;
+}
+
+.field-check .field-error {
+  flex-basis: 100%;
+}
+
+.field-help {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.field-error {
+  margin: 4px 0 0;
+  color: var(--error);
+  font-size: 0.9rem;
+}
+
