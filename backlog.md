@@ -19,3 +19,4 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#10](backlog/010-create-the-github-repo-nothisisnotdaniel-prwatch.md) Create the GitHub repo nothisisnotdaniel/prwatch and push develop
 - [h] [#11](backlog/011-test-prwatch-end-to-end-with.md) Test PRWatch end to end with a real PR (after: #9)
 - [ ] [#12](backlog/012-verify-the-roomkit-package-signature-in.md) Verify the RoomKit package signature in CI (after: #1)
+- [ ] [#13](backlog/013-build-the-headless-allow-list-per.md) Build the headless allow-list per PR
