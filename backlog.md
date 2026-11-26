@@ -31,7 +31,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#23](backlog/023-write-request-json-without-a-check.md) Write request.json without a check-then-write symlink window
 - [ ] [#24](backlog/024-make-sure-job-py-pr-request.md) Make sure job.py pr request always consumes request.json
 - [ ] [#25](backlog/025-decide-how-long-an-armed-consent.md) Decide how long an armed Consent or Merge button stays armed
-- [?] [#26](backlog/026-show-a-short-sent-text-after.md) Show a short sent text after a Consent, Merge or Cancel tap
+- [ ] [#26](backlog/026-show-a-short-sent-text-after.md) Show a short sent text after a Consent, Merge or Cancel tap
 - [?] [#27](backlog/027-check-the-tap-area-of-the.md) Check the tap area of the on/off switch on the iPhone
 - [?] [#28](backlog/028-drop-the-unneeded-checkout-in-the.md) Drop the unneeded checkout in the release job
 - [?] [#29](backlog/029-verify-the-release-tarball-independently-of.md) Verify the release tarball independently of the build job's hash
