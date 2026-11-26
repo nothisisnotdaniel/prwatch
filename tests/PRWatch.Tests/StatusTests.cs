@@ -153,6 +153,38 @@ public sealed class StatusTests
         Assert.Equal(Initial, await client.GetStringAsync(Route));
     }
 
+    [Theory]
+    [InlineData("\"x\"", false)]
+    [InlineData("null", false)]
+    [InlineData("\"runs_per_hour\"", true)]
+    public void BrakeWithAnUnknownReason_LoadsAsNotHolding(string reason, bool kept)
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "prwatch-status-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "status.json"),
+                "{\"lastPoll\":\"2026-11-26T09:00:00.000Z\",\"brake\":{\"holding\":true,\"reason\":" + reason
+                + ",\"until\":\"2026-11-26T11:00:00.000Z\"}}");
+
+            Status loaded = new StatusStore(folder, new FakeClock(FakeClock.DefaultNow)).Current;
+
+            Assert.Equal(FakeClock.DefaultNow.AddHours(-1), loaded.LastPoll);
+            Assert.Equal(kept
+                ? new BrakeStatus
+                {
+                    Holding = true,
+                    Reason = TokenBrake.RunsPerHour,
+                    Until = FakeClock.DefaultNow.AddHours(1),
+                }
+                : new BrakeStatus(), loaded.Brake);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
     [Fact]
     public void Store_KeepsRunKeysInOrdinalOrder()
     {

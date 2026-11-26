@@ -164,7 +164,7 @@ internal sealed record PickStatus
     public required DateTimeOffset At { get; init; }
 }
 
-/// <summary>Whether the token brake holds, why and until when.</summary>
+/// <summary>Whether the token brake holds, why (one of <see cref="TokenBrake.Reasons"/>) and until when.</summary>
 internal sealed record BrakeStatus
 {
     public bool Holding { get; init; }
@@ -224,6 +224,8 @@ internal sealed record StatusError(string Code, DateTimeOffset At)
     public const string ModelUnknown = "model_unknown";
 
     public const string RunFailed = "run_failed";
+
+    public const string LedgerWriteFailed = "ledger_write_failed";
 
     /// <summary>The codes a started run clears.</summary>
     public static readonly string[] RunCodes = [ClaudeNotFound, ModelUnknown, RunFailed];
