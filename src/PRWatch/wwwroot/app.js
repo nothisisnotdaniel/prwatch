@@ -103,7 +103,7 @@ const ErrorFallback = "Something went wrong. Try again.";
 
 // The fixed texts of the status file's lastError codes.
 const StatusErrors = {
-  settings_unreadable: "The settings file can't be read, so the defaults are in use and watching is off. Save the settings to replace it.",
+  settings_unreadable: "The settings file can't be read, so the defaults are in use and watching is off. Save the settings below to replace it.",
   status_write_failed: "PRWatch could not save its status file.",
   python_missing: "python3 was not found, so PRWatch can't poll.",
   poll_timeout: "The last poll took too long and was stopped.",
@@ -370,7 +370,7 @@ async function tap(action, pr) {
 
 function actionButton(action, pr) {
   const head = shortSha(pr.headSha);
-  const label = textFor({ consent: Texts.consent, merge: Texts.merge, cancel: Texts.cancel }, action, "");
+  const label = action === "consent" ? Texts.consent : action === "merge" ? Texts.merge : Texts.cancel;
   const button = element("button", "action action-" + action, label + " · " + head);
   button.type = "button";
   const confirm = action === "consent" ? Texts.confirmConsent : action === "merge" ? Texts.confirmMerge : "";
@@ -393,7 +393,7 @@ function prRow(pr) {
   const head = element("p", "pr-head");
   const number = "#" + String(pr.number);
   const title = capped(pr.title, MaxTitle);
-  if (typeof pr.url === "string" && PullUrl.test(pr.url)) {
+  if (typeof pr.url === "string" && PullUrl.test(pr.url) && pr.url.endsWith("/pull/" + String(pr.number))) {
     const link = element("a", "pr-link", number + " " + title);
     link.href = pr.url;
     link.rel = "noopener noreferrer";

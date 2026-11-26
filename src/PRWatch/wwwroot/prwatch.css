@@ -3,7 +3,6 @@
 :root {
   --pr-warn-bg: #fff1cc;
   --pr-warn-fg: #7a4a00;
-  --pr-good-fg: #14632f;
   --pr-trusted-bg: #dff3e6;
   --pr-trusted-fg: #14632f;
   --pr-untrusted-bg: #fde6cf;
@@ -16,7 +15,6 @@
   :root {
     --pr-warn-bg: #3d2e00;
     --pr-warn-fg: #ffd36b;
-    --pr-good-fg: #6fd08f;
     --pr-trusted-bg: #12361f;
     --pr-trusted-fg: #8fe0aa;
     --pr-untrusted-bg: #3d2410;
@@ -144,7 +142,7 @@ span.pr-link {
 }
 
 .pr-round.good {
-  color: var(--pr-good-fg);
+  color: var(--pass-fg);
 }
 
 .pr-actions {

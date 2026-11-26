@@ -202,6 +202,7 @@ public sealed partial class WebAppTests
         int check = before.LastIndexOf("PullUrl.test(pr.url)", StringComparison.Ordinal);
         Assert.True(check > before.LastIndexOf("function ", StringComparison.Ordinal), "href outside the url check");
         Assert.Contains("link.rel = \"noopener noreferrer\";", app, StringComparison.Ordinal);
+        Assert.Contains("pr.url.endsWith(\"/pull/\" + String(pr.number))", app, StringComparison.Ordinal);
         Assert.DoesNotContain("setAttribute(", app, StringComparison.Ordinal);
         Assert.Contains("capped(pr.title, MaxTitle)", app, StringComparison.Ordinal);
         Assert.Contains("capped(pr.author, MaxAuthor)", app, StringComparison.Ordinal);

@@ -440,9 +440,7 @@ internal sealed class Watcher : BackgroundService
             Trusted = trusted,
             Request = request,
             Round = round,
-            Stage = ReadString(item, "stage") is { } stage && PrRules.Stages.Contains(stage, StringComparer.Ordinal)
-                ? stage
-                : null,
+            Stage = ReadString(item, "stage") is { } stage && PrRules.IsStage(stage) ? stage : null,
         };
     }
 
@@ -495,7 +493,7 @@ internal sealed class Watcher : BackgroundService
             HeadSha = headSha,
             Current = current,
             Clean = clean,
-            Tests = tests is not null && PrRules.TestResults.Contains(tests, StringComparer.Ordinal) ? tests : null,
+            Tests = tests is not null && PrRules.IsTests(tests) ? tests : null,
             Mergeable = ReadBool(value, "mergeable"),
         };
         return true;
