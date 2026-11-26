@@ -127,12 +127,10 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
             IReadOnlyList<LedgerEntry> entries = ledger.Entries;
             DateTimeOffset checkedAt = time.GetUtcNow();
-            if (TokenBrake.Evaluate(status.Current.PlanUsage, entries, now, checkedAt).Holding)
+            BrakeStatus brake = TokenBrake.Evaluate(status.Current.PlanUsage, entries, now, checkedAt);
+            if (brake.Holding)
             {
-                status.Update(previous => previous with
-                {
-                    Brake = TokenBrake.Evaluate(previous.PlanUsage, entries, now, checkedAt),
-                });
+                status.Update(previous => previous with { Brake = brake });
                 return false;
             }
 
@@ -351,7 +349,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
             bool? isError = figures.AnyError ? true : figures.Results > 0 ? false : null;
             ledger.End(run.Entry, now, figures.CostUsd);
             IReadOnlyList<LedgerEntry> entries = ledger.Entries;
-            Settings current = settings.Current;
+            Settings brakeSettings = settings.Current;
             status.Update(previous =>
             {
                 RunStatus started = previous.Runs.TryGetValue(run.Key, out RunStatus? found)
@@ -385,7 +383,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
                         ModelUsage = figures.ModelUsage,
                     }),
                     Login = login,
-                    Brake = TokenBrake.Evaluate(previous.PlanUsage, entries, current, now),
+                    Brake = TokenBrake.Evaluate(previous.PlanUsage, entries, brakeSettings, now),
                 };
             });
         }
