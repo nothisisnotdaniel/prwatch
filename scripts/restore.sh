@@ -19,8 +19,10 @@
 # RoomKit package" step does (without the attestation, which needs gh and a token): the version pinned in
 # src/PRWatch/PRWatch.csproj (Version="[x.y.z]"), and the SHA-256 of
 # ${NUGET_PACKAGES:-~/.nuget/packages}/roomkit/<v>/roomkit.<v>.nupkg against roomkit.sha256 (one line
-# <hash>  RoomKit.<v>.nupkg). A package that is missing, a symlink or does not match is removed from the NuGet
-# packages folder (rm -rf of roomkit/<v>, never followed through a symlink), so no build imports its build/*.props.
+# <hash>  RoomKit.<v>.nupkg). A package that is missing, a symlink (or in a symlinked roomkit/<v> folder) or does
+# not match is removed from the NuGet packages folder (rm -rf of roomkit/<v>, never followed through a symlink), so
+# no build imports the build/*.props of a tampered download. Like CI, it hashes only the nupkg, not the files NuGet
+# extracted next to it.
 # Exit codes: 1 no token found or the keychain did not hand it out (prompt denied or cancelled; the token file is
 # then not tried), 2 the token file or a value is refused, 4 the RoomKit check failed (no pin, package missing or
 # not matching roomkit.sha256), else dotnet's (a failed restore is passed on without the check).
@@ -105,7 +107,7 @@ case $version in
 esac
 folder="${NUGET_PACKAGES:-$HOME/.nuget/packages}/roomkit/$version"
 package="$folder/roomkit.$version.nupkg"
-if [ ! -f "$package" ] || [ -L "$package" ]; then
+if [ -L "$folder" ] || [ ! -f "$package" ] || [ -L "$package" ]; then
     rm -rf "$folder"
     echo "RoomKit.$version.nupkg is not in the restored packages." >&2
     exit 4

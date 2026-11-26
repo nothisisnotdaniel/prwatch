@@ -372,6 +372,7 @@ public sealed class RestoreScriptTests : IDisposable
     [Theory]
     [InlineData("file")]
     [InlineData("folder")]
+    [InlineData("matching-folder")]
     public void SymlinkedPackage_FailsWith4_AndTheTargetIsNotTouched(string scene)
     {
         if (!OperatingSystem.IsMacOS())
@@ -386,7 +387,6 @@ public sealed class RestoreScriptTests : IDisposable
         string target = Path.Combine(outside, "roomkit." + Version + ".nupkg");
         File.WriteAllBytes(target, PackageBytes);
         string versionFolder = Path.Combine(DefaultPackages, "roomkit", Version);
-        string expectedLine = MissingLine;
         if (scene == "file")
         {
             Directory.CreateDirectory(versionFolder);
@@ -394,10 +394,13 @@ public sealed class RestoreScriptTests : IDisposable
         }
         else
         {
-            File.WriteAllBytes(target, "tampered bytes"u8.ToArray());
+            if (scene == "folder")
+            {
+                File.WriteAllBytes(target, "tampered bytes"u8.ToArray());
+            }
+
             Directory.CreateDirectory(Path.GetDirectoryName(versionFolder)!);
             Directory.CreateSymbolicLink(versionFolder, outside);
-            expectedLine = MismatchLine;
         }
 
         byte[] before = File.ReadAllBytes(target);
@@ -405,7 +408,7 @@ public sealed class RestoreScriptTests : IDisposable
         (int code, string stdout, string stderr) = RunScript([]);
 
         Assert.Equal(4, code);
-        Assert.Contains(expectedLine, stderr, StringComparison.Ordinal);
+        Assert.Contains(MissingLine, stderr, StringComparison.Ordinal);
         Assert.False(Path.Exists(versionFolder));
         Assert.Equal(before, File.ReadAllBytes(target));
         Assert.DoesNotContain(Token, stdout + stderr, StringComparison.Ordinal);
