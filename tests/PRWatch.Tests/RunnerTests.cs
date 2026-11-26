@@ -82,7 +82,14 @@ public sealed class RunnerTests
         Assert.Equal(PollRunner.FixedPath, env.GetProperty("PATH").GetString());
         foreach (string name in new[] { "HOME", "USER" })
         {
-            Assert.Equal(Environment.GetEnvironmentVariable(name), env.GetProperty(name).GetString());
+            if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
+            {
+                Assert.Equal(value, env.GetProperty(name).GetString());
+            }
+            else
+            {
+                Assert.False(env.TryGetProperty(name, out _));
+            }
         }
 
         string[] allowed = ["HOME", "USER", "TMPDIR", "FACTORY_PRS_DIR", "FACTORY_PR_HEADLESS", "PATH"];

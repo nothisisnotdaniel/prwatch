@@ -147,6 +147,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
             }
             catch (ArgumentException)
             {
+                status.RecordError(StatusError.RunFailed);
                 return false;
             }
 
