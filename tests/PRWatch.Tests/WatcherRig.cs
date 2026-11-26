@@ -22,9 +22,12 @@ internal sealed class WatcherRig : IDisposable
     /// timeout token.</param>
     /// <param name="readVariable">The poll runner's environment reader (<see cref="PollRunner.ReadVariable"/>);
     /// <c>null</c> keeps the real process environment.</param>
+    /// <param name="beforeKill">The poll runner's kill hook (<see cref="PollRunner.BeforeKill"/>).</param>
     public WatcherRig(TimeSpan? timeout = null, string? searchPath = null, bool open = true, bool pollOnClock = false,
-        Func<WatcherRig, CancellationToken, Task>? afterExit = null, Func<string, string?>? readVariable = null)
+        Func<WatcherRig, CancellationToken, Task>? afterExit = null, Func<string, string?>? readVariable = null,
+        Action? beforeKill = null)
     {
+        BeforeKill = beforeKill;
         PollOnClock = pollOnClock;
         ReadVariable = readVariable;
         AfterExit = afterExit is null ? null : token => afterExit(this, token);
@@ -61,6 +64,9 @@ internal sealed class WatcherRig : IDisposable
 
     public Func<CancellationToken, Task>? AfterExit { get; }
 
+    /// <summary>The poll runner's kill hook, or <c>null</c>.</summary>
+    public Action? BeforeKill { get; }
+
     /// <summary>The poll runner's environment reader, or <c>null</c> for the real process environment.</summary>
     public Func<string, string?>? ReadVariable { get; }
 
@@ -89,12 +95,13 @@ internal sealed class WatcherRig : IDisposable
         Watcher = new Watcher(Settings, Status, Poller(), Runner, Ledger, Clock);
     }
 
-    /// <summary>A poll runner with the rig's timeout, search path, clock choice, hook and environment reader.</summary>
+    /// <summary>A poll runner with the rig's timeout, search path, clock choice, hooks and environment reader.</summary>
     public PollRunner Poller()
     {
         return new PollRunner(Timeout, SearchPath, PollOnClock ? Clock : null)
         {
             AfterExit = AfterExit,
+            BeforeKill = BeforeKill,
             ReadVariable = ReadVariable ?? Environment.GetEnvironmentVariable,
         };
     }

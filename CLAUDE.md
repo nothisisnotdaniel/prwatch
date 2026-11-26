@@ -106,7 +106,7 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     `stream.jsonl` (`#wait` blocks until a `release` file, `#flood` floods, `#orphan` double-forks a grandchild in
     a new session that keeps stdout and stderr open, writes `orphan-pid` and sleeps until a `release-orphan`
     file), writes `stderr.txt` and exits with `exit-code`; tests supply the environment through the runners'
-    test-only `ReadVariable` hook and never write the process environment. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
+    test-only `ReadVariable` hook and never write the process environment. The poll timeout is the config value `PollTimeoutSeconds` (default 120; `PollRunner` disposes its kill registrations once the poll has exited, and its test-only `BeforeKill` hook counts the tree kills), the run timeout
     `RunTimeoutSeconds` (default 3600).
   - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`);
     a failure after its process started (before the monitor runs) kills the run with its tree, releases the lock and
