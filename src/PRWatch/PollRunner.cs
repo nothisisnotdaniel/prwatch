@@ -74,6 +74,11 @@ internal sealed class PollRunner
     /// tests set it (through <c>InternalsVisibleTo</c>).</summary>
     internal Func<CancellationToken, Task>? AfterExit { get; init; }
 
+    /// <summary>Test-only: invoked each time the runner is about to call <see cref="Process.Kill(bool)"/> (after the
+    /// check that the process has not exited). Always <c>null</c> in production; never set from config or a request.
+    /// Only the tests set it (through <c>InternalsVisibleTo</c>).</summary>
+    internal Action? BeforeKill { get; init; }
+
     /// <summary>Test-only: reads the <see cref="PassedVariables"/> from PRWatch's own environment. Always
     /// <see cref="Environment.GetEnvironmentVariable(string)"/> in production; never set from config or a request.
     /// Only the tests set it (through <c>InternalsVisibleTo</c>), so they never write the process environment.</summary>
@@ -186,6 +191,11 @@ internal sealed class PollRunner
 
         await Settle(error);
         await process.WaitForExitAsync(CancellationToken.None);
+
+        // The process has exited and been reaped, so its PID may already belong to another process: no kill may run
+        // from here on. Dispose waits for a callback that is already running, so once it returns none can run.
+        timeoutKiller.Dispose();
+        callerKiller.Dispose();
         if (AfterExit is { } afterExit)
         {
             await afterExit(timeout.Token);
@@ -275,8 +285,18 @@ internal sealed class PollRunner
         }
     }
 
-    private static void Kill(Process process)
+    /// <summary>Kills the process with its tree, unless it has already exited. A process whose state cannot be told
+    /// is still killed, which is the fail-safe side. A small window stays open: the process can exit and be reaped
+    /// between the check and <see cref="Process.Kill(bool)"/>; closing it would need pidfd or process-group
+    /// signalling.</summary>
+    private void Kill(Process process)
     {
+        if (HasExited(process))
+        {
+            return;
+        }
+
+        BeforeKill?.Invoke();
         try
         {
             process.Kill(entireProcessTree: true);
