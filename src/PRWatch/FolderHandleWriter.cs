@@ -6,7 +6,8 @@ namespace PRWatch;
 /// <summary>Writes one file below a trusted root through folder descriptors only: every folder after the root is
 /// opened with <c>O_NOFOLLOW | O_DIRECTORY</c> relative to its parent's descriptor, and the temp file, the write
 /// and the rename all happen relative to the last one, so swapping any path component for a symlink after it was
-/// opened can't redirect the write. macOS and Linux glibc x64/arm64 only (the targets of RoomKit's
+/// opened can't redirect the write (it also reads one small file that way, <see cref="ReadNoFollow"/>). macOS and
+/// Linux glibc x64/arm64 only (the targets of RoomKit's
 /// <c>SafeFileReader</c>); see <see cref="IsSupported"/>.</summary>
 internal static class FolderHandleWriter
 {
@@ -154,6 +155,90 @@ internal static class FolderHandleWriter
         }
     }
 
+    /// <summary>Reads at most <paramref name="max"/> bytes of <c>&lt;folder&gt;/&lt;fileName&gt;</c> without following
+    /// a symlink at either: the folder is opened with <c>O_NOFOLLOW | O_DIRECTORY</c>, the file relative to it with
+    /// <c>O_NOFOLLOW | O_NONBLOCK</c> (a FIFO never blocks) and only when it is a regular file. Returns the bytes, up
+    /// to <paramref name="max"/> + 1 so a caller can tell a longer file, or null when anything fails or the platform
+    /// is not supported.</summary>
+    public static byte[]? ReadNoFollow(string folderPath, string fileName, int max)
+    {
+        ArgumentNullException.ThrowIfNull(folderPath);
+        ArgumentNullException.ThrowIfNull(fileName);
+        if (!Flags.Supported || max < 0)
+        {
+            return null;
+        }
+
+        int folder = Open(folderPath, Flags.ReadOnly | Flags.Directory | Flags.NoFollow | Flags.CloseOnExec, 0);
+        if (folder < 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!IsRegular(folder, fileName))
+            {
+                return null;
+            }
+
+            int file = OpenAt(folder, fileName, Flags.ReadOnly | Flags.NoFollow | Flags.NonBlock | Flags.CloseOnExec, 0);
+            if (file < 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                byte[] buffer = new byte[max + 1];
+                int total = 0;
+                while (total < buffer.Length)
+                {
+                    nint count = Read(file, ref buffer[total], buffer.Length - total);
+                    if (count < 0)
+                    {
+                        if (Marshal.GetLastPInvokeError() == Eintr)
+                        {
+                            continue;
+                        }
+
+                        return null;
+                    }
+
+                    if (count == 0)
+                    {
+                        break;
+                    }
+
+                    total += (int)count;
+                }
+
+                return buffer[..total];
+            }
+            finally
+            {
+                _ = Close(file);
+            }
+        }
+        finally
+        {
+            _ = Close(folder);
+        }
+    }
+
+    private static bool IsRegular(int folder, string name)
+    {
+        byte[] buffer = new byte[Flags.StatSize];
+        return Stat(folder, name, buffer) == 0 && (ModeOf(buffer) & TypeMask) == TypeRegular;
+    }
+
+    private static int ModeOf(byte[] buffer)
+    {
+        return Flags.ModeWidth == 2
+            ? BitConverter.ToUInt16(buffer, Flags.ModeOffset)
+            : (int)BitConverter.ToUInt32(buffer, Flags.ModeOffset);
+    }
+
     private static int OpenFolder(int parent, string name)
     {
         return OpenAt(parent, name, Flags.ReadOnly | Flags.Directory | Flags.NoFollow | Flags.CloseOnExec, 0);
@@ -181,10 +266,7 @@ internal static class FolderHandleWriter
             return Marshal.GetLastPInvokeError() == Enoent;
         }
 
-        int mode = Flags.ModeWidth == 2
-            ? BitConverter.ToUInt16(buffer, Flags.ModeOffset)
-            : (int)BitConverter.ToUInt32(buffer, Flags.ModeOffset);
-        return (mode & TypeMask) == TypeRegular;
+        return (ModeOf(buffer) & TypeMask) == TypeRegular;
     }
 
     private static int Stat(int folder, string name, byte[] buffer)
@@ -226,12 +308,12 @@ internal static class FolderHandleWriter
         Architecture architecture = RuntimeInformation.OSArchitecture;
         if (OperatingSystem.IsMacOS() && architecture is Architecture.X64 or Architecture.Arm64)
         {
-            // <sys/fcntl.h>: O_RDONLY 0, O_WRONLY 0x1, O_CREAT 0x200, O_EXCL 0x800, O_NOFOLLOW 0x100,
+            // <sys/fcntl.h>: O_RDONLY 0, O_WRONLY 0x1, O_NONBLOCK 0x4, O_CREAT 0x200, O_EXCL 0x800, O_NOFOLLOW 0x100,
             // O_DIRECTORY 0x100000, O_CLOEXEC 0x1000000; AT_SYMLINK_NOFOLLOW 0x20.
             // struct stat (64-bit inode, the only layout on arm64 and the fstatat$INODE64 symbol on x64):
             // st_dev int32 at 0, st_mode uint16 at 4, ..., 144 bytes in all.
             return new Layout(true, ReadOnly: 0, WriteOnly: 0x1, Create: 0x200, Exclusive: 0x800, NoFollow: 0x100,
-                Directory: 0x100000, CloseOnExec: 0x1000000, SymlinkNoFollow: 0x20, StatSize: 144, ModeOffset: 4,
+                NonBlock: 0x4, Directory: 0x100000, CloseOnExec: 0x1000000, SymlinkNoFollow: 0x20, StatSize: 144, ModeOffset: 4,
                 ModeWidth: 2, MacInode64Symbol: architecture == Architecture.X64,
                 VariadicOnStack: architecture == Architecture.Arm64);
         }
@@ -241,11 +323,11 @@ internal static class FolderHandleWriter
             if (architecture == Architecture.X64)
             {
                 // x86_64 <asm/fcntl.h>: O_RDONLY 0, O_WRONLY 01, O_CREAT 0100, O_EXCL 0200, O_DIRECTORY 0200000,
-                // O_NOFOLLOW 0400000, O_CLOEXEC 02000000; AT_SYMLINK_NOFOLLOW 0x100.
+                // O_NOFOLLOW 0400000, O_NONBLOCK 04000, O_CLOEXEC 02000000; AT_SYMLINK_NOFOLLOW 0x100.
                 // struct stat (x86_64): st_dev u64 at 0, st_ino u64 at 8, st_nlink u64 at 16, st_mode u32 at 24,
                 // ..., 144 bytes in all.
                 return new Layout(true, ReadOnly: 0, WriteOnly: 0x1, Create: 0x40, Exclusive: 0x80, NoFollow: 0x20000,
-                    Directory: 0x10000, CloseOnExec: 0x80000, SymlinkNoFollow: 0x100, StatSize: 144, ModeOffset: 24,
+                    NonBlock: 0x800, Directory: 0x10000, CloseOnExec: 0x80000, SymlinkNoFollow: 0x100, StatSize: 144, ModeOffset: 24,
                     ModeWidth: 4, MacInode64Symbol: false, VariadicOnStack: false);
             }
 
@@ -254,16 +336,16 @@ internal static class FolderHandleWriter
                 // aarch64 <asm/fcntl.h>: as x86_64 except O_DIRECTORY 040000 and O_NOFOLLOW 0100000.
                 // struct stat (asm-generic): st_dev u64 at 0, st_ino u64 at 8, st_mode u32 at 16, ..., 128 bytes.
                 return new Layout(true, ReadOnly: 0, WriteOnly: 0x1, Create: 0x40, Exclusive: 0x80, NoFollow: 0x8000,
-                    Directory: 0x4000, CloseOnExec: 0x80000, SymlinkNoFollow: 0x100, StatSize: 128, ModeOffset: 16,
+                    NonBlock: 0x800, Directory: 0x4000, CloseOnExec: 0x80000, SymlinkNoFollow: 0x100, StatSize: 128, ModeOffset: 16,
                     ModeWidth: 4, MacInode64Symbol: false, VariadicOnStack: false);
             }
         }
 
-        return new Layout(false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false);
+        return new Layout(false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false);
     }
 
     private sealed record Layout(bool Supported, int ReadOnly, int WriteOnly, int Create, int Exclusive, int NoFollow,
-        int Directory, int CloseOnExec, int SymlinkNoFollow, int StatSize, int ModeOffset, int ModeWidth,
+        int NonBlock, int Directory, int CloseOnExec, int SymlinkNoFollow, int StatSize, int ModeOffset, int ModeWidth,
         bool MacInode64Symbol, bool VariadicOnStack);
 
     // DllImport, not LibraryImport: the generated code would need AllowUnsafeBlocks. On Unix the strings are passed
@@ -296,6 +378,9 @@ internal static class FolderHandleWriter
 
     [DllImport("libc", EntryPoint = "write", SetLastError = true)]
     private static extern nint WriteBytes(int file, byte[] bytes, nint count);
+
+    [DllImport("libc", EntryPoint = "read", SetLastError = true)]
+    private static extern nint Read(int file, ref byte buffer, nint count);
 
     [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
     private static extern int Fsync(int file);
