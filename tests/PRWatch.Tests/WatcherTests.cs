@@ -1167,6 +1167,73 @@ public sealed class WatcherTests
         Assert.Equal(["factory"], Watcher.AllowedProjects(discovered, ["factory"]));
     }
 
+    [Theory]
+    [InlineData("spec")]
+    [InlineData("build")]
+    [InlineData("review")]
+    [InlineData("approve")]
+    public async Task ProjectsUnset_FactoryPrWaitsWhileAFactoryJobIsActive(string stage)
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("factory", 2)]);
+        rig.Job("1-f", "{\"project\":\"factory\",\"stage\":\"" + stage + "\"}");
+
+        await rig.Poll();
+
+        Status status = rig.Status.Current;
+        Assert.Null(rig.Settings.Current.Projects);
+        Assert.Equal(["factory-2"], status.Prs.Select(pr => PrRules.RunKey(pr.Project, pr.Number)));
+        Assert.Null(status.Pick);
+        Assert.Empty(rig.Runner.Calls);
+    }
+
+    [Theory]
+    [InlineData("done")]
+    [InlineData("blocked")]
+    public async Task ProjectsUnset_FactoryPrIsPickedWhenTheFactoryJobIsNotActive(string stage)
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("factory", 2)]);
+        rig.Job("1-f", "{\"project\":\"factory\",\"stage\":\"" + stage + "\"}");
+
+        await rig.Poll();
+
+        Assert.Null(rig.Settings.Current.Projects);
+        ReviewPick pick = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(("factory", 2, Sha), (pick.Project, pick.Number, pick.HeadSha));
+    }
+
+    [Fact]
+    public async Task ProjectsUnset_FactoryJobInBuildDoesNotHoldBackAnotherProject()
+    {
+        using WatcherRig rig = new();
+        rig.Output([WatcherRig.Pr("Alpha", 1), WatcherRig.Pr("factory", 2)]);
+        rig.Job("1-f", "{\"project\":\"factory\",\"stage\":\"build\"}");
+
+        await rig.Poll();
+
+        Assert.Equal(["Alpha-1", "factory-2"],
+            rig.Status.Current.Prs.Select(pr => PrRules.RunKey(pr.Project, pr.Number)));
+        ReviewPick pick = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(("Alpha", 1), (pick.Project, pick.Number));
+    }
+
+    [Fact]
+    public async Task ProjectsChangedBackToNull_WatchesAndPicksTheFactoryPrAgain()
+    {
+        using WatcherRig rig = new();
+        rig.Change("{\"projects\":[\"Alpha\"]}");
+        rig.Change("{\"projects\":null}");
+        rig.Output([WatcherRig.Pr("factory", 2)]);
+
+        await rig.Poll();
+
+        Assert.Null(rig.Settings.Current.Projects);
+        Assert.Equal(["factory-2"], rig.Status.Current.Prs.Select(pr => PrRules.RunKey(pr.Project, pr.Number)));
+        ReviewPick pick = Assert.Single(rig.Runner.Calls);
+        Assert.Equal(("factory", 2), (pick.Project, pick.Number));
+    }
+
     // --- AC-9: loading status.json ---------------------------------------------------------------
 
     [Fact]
