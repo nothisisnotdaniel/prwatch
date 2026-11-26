@@ -38,7 +38,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#29](backlog/029-verify-the-release-tarball-independently-of.md) Verify the release tarball independently of the build job's hash → 458-verify-release-hash.2627d768c70142ccbf0f691f91a4bd9f
 - [x] [#30](backlog/030-tidy-the-publish-output-flag-in.md) Tidy the publish output flag in release.yml → 460-tidy-publish-output.9c937950ada44a4c8ae7861db388a73b
 - [x] [#31](backlog/031-keep-a-live-review-s-update.md) Keep a live review's update lock when a second instance starts → 461-keep-live-update-lock.792106e26c9f4022947e469c2f0a3397
-- [ ] [#32](backlog/032-note-why-the-roomkit-feed-tests.md) Note why the RoomKit check tests need bash
+- [x] [#32](backlog/032-note-why-the-roomkit-feed-tests.md) Note why the RoomKit check tests need bash → 462-note-bash-tests.eb792df3d9d245b7ba3839d8c89969b3
 - [x] [#35](backlog/035-put-prwatch-on-tailscale-and-add.md) Put PRWatch on Tailscale and add it to the iPhone home screen (after: #34)
 - [ ] [#36](backlog/036-keep-the-stored-github-packages-token.md) Keep the stored GitHub Packages token behind a keychain prompt
 - [ ] [#37](backlog/037-check-the-roomkit-package-hash-in.md) Check the RoomKit package hash in restore.sh
