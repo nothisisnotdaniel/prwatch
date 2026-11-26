@@ -99,7 +99,8 @@ Every factory agent reads this file before working on PRWatch. Keep it short and
     (`PrWatchFactory.TestServices`; like the real runner it writes the run start to the status). `FakeClaude`
     writes an executable `python3` fake `claude` in the test's folder that logs argv, cwd and environment, prints
     `stream.jsonl` (`#wait` blocks until a `release` file, `#flood` floods), writes `stderr.txt` and exits with
-    `exit-code`. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
+    `exit-code`; tests supply the environment through the runners' test-only `ReadVariable` hook and never write
+    the process environment. The poll timeout is the config value `PollTimeoutSeconds` (default 120), the run timeout
     `RunTimeoutSeconds` (default 3600).
   - The runner is `ClaudeReviewRunner` (argv in `ClaudeArgs`, pinned by `ClaudeArgsTests` to `prwatch_smoke.py`).
   - `scripts/restore.sh` (0755, PRWatch's own): the local restore with the PAT scoped to it (`RestoreScriptTests`).

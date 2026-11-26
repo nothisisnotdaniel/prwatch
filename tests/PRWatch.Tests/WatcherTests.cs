@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -26,16 +25,17 @@ public sealed class WatcherTests
     [Fact]
     public async Task Poll_RunsTheFirstPython3OnTheFixedPath_WithTheFixedArgvCwdStdinAndEnvironment()
     {
-        Environment.SetEnvironmentVariable("SECRET_X", "do-not-pass");
-        using WatcherRig rig = new();
-        try
+        Dictionary<string, string> variables = new(StringComparer.Ordinal)
         {
-            await rig.Poll();
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("SECRET_X", null);
-        }
+            ["HOME"] = "/h-test",
+            ["USER"] = "u-test",
+            ["TMPDIR"] = "/t-test",
+            ["SECRET_X"] = "do-not-pass",
+            ["CLAUDE_CODE_OAUTH_TOKEN"] = "do-not-pass",
+        };
+        using WatcherRig rig = new(readVariable: Reader(variables));
+
+        await rig.Poll();
 
         string expected = PollRunner.FixedPath.Split(':')
             .Select(folder => Path.Combine(folder, "python3"))
@@ -48,24 +48,42 @@ public sealed class WatcherTests
         Assert.Equal("", call.GetProperty("stdin").GetString());
         JsonElement env = call.GetProperty("env");
         Assert.Equal(PollRunner.FixedPath, env.GetProperty("PATH").GetString());
-        foreach (string name in PollRunner.PassedVariables)
-        {
-            Assert.Equal(Environment.GetEnvironmentVariable(name), env.GetProperty(name).GetString());
-        }
-
+        Assert.Equal("/h-test", env.GetProperty("HOME").GetString());
+        Assert.Equal("u-test", env.GetProperty("USER").GetString());
+        Assert.Equal("/t-test", env.GetProperty("TMPDIR").GetString());
         Assert.False(env.TryGetProperty("SECRET_X", out _));
-        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
-        {
-            string name = (string)entry.Key;
-            if (name is "HOME" or "USER" or "TMPDIR" or "PATH" || InterpreterVariables.Contains(name))
-            {
-                continue;
-            }
+        Assert.False(env.TryGetProperty("CLAUDE_CODE_OAUTH_TOKEN", out _));
+        AssertOnly(env, ["HOME", "USER", "TMPDIR", "PATH"]);
+        Assert.Null(rig.Status.Current.LastError);
+    }
 
-            Assert.False(env.TryGetProperty(name, out _), "passed on: " + name);
+    [Fact]
+    public async Task Poll_WithAReaderThatReturnsNothing_PassesOnOnlyThePath()
+    {
+        using WatcherRig rig = new(readVariable: name => name == "USER" ? null : "");
+
+        await rig.Poll();
+
+        JsonElement env = Assert.Single(rig.Calls()).GetProperty("env");
+        Assert.Equal(PollRunner.FixedPath, env.GetProperty("PATH").GetString());
+        AssertOnly(env, ["PATH"]);
+        Assert.Null(rig.Status.Current.LastError);
+    }
+
+    [Fact]
+    public async Task Poll_WithoutAReader_PassesOnTheProcessHome()
+    {
+        using WatcherRig rig = new();
+
+        await rig.Poll();
+
+        JsonElement env = Assert.Single(rig.Calls()).GetProperty("env");
+        if (Environment.GetEnvironmentVariable("HOME") is { Length: > 0 } home)
+        {
+            Assert.Equal(home, env.GetProperty("HOME").GetString());
         }
 
-        Assert.Null(rig.Status.Current.LastError);
+        Assert.Equal(PollRunner.FixedPath, env.GetProperty("PATH").GetString());
     }
 
     [Fact]
@@ -1114,5 +1132,22 @@ public sealed class WatcherTests
             JsonElement lastPoll = status.RootElement.GetProperty("lastPoll");
             return lastPoll.ValueKind == JsonValueKind.String && lastPoll.GetString() == expected;
         }, "lastPoll " + expected);
+    }
+
+    /// <summary>An environment reader over <paramref name="variables"/>; every other name reads as unset.</summary>
+    private static Func<string, string?> Reader(IReadOnlyDictionary<string, string> variables)
+    {
+        return name => variables.TryGetValue(name, out string? value) ? value : null;
+    }
+
+    /// <summary>Asserts that <paramref name="env"/> holds no variable outside <paramref name="allowed"/> and the
+    /// python3 shim's own.</summary>
+    private static void AssertOnly(JsonElement env, string[] allowed)
+    {
+        foreach (JsonProperty property in env.EnumerateObject())
+        {
+            Assert.True(allowed.Contains(property.Name) || InterpreterVariables.Contains(property.Name),
+                "passed on: " + property.Name);
+        }
     }
 }

@@ -78,6 +78,11 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
 
     public TimeSpan Timeout { get; }
 
+    /// <summary>Test-only: reads the <see cref="PollRunner.PassedVariables"/> from PRWatch's own environment. Always
+    /// <see cref="Environment.GetEnvironmentVariable(string)"/> in production; never set from config or a request.
+    /// Only the tests set it (through <c>InternalsVisibleTo</c>), so they never write the process environment.</summary>
+    internal Func<string, string?> ReadVariable { get; init; } = Environment.GetEnvironmentVariable;
+
     public bool IsBusy
     {
         get
@@ -255,7 +260,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
         run?.End(RunStatus.Stopped);
     }
 
-    private static Process? Start(IReadOnlyList<string> argv, string root, string prs)
+    private Process? Start(IReadOnlyList<string> argv, string root, string prs)
     {
         ProcessStartInfo start = new(argv[0])
         {
@@ -274,7 +279,7 @@ internal sealed partial class ClaudeReviewRunner : IReviewRunner, IDisposable
         start.Environment.Clear();
         foreach (string name in PollRunner.PassedVariables)
         {
-            string? value = Environment.GetEnvironmentVariable(name);
+            string? value = ReadVariable(name);
             if (!string.IsNullOrEmpty(value))
             {
                 start.Environment[name] = value;

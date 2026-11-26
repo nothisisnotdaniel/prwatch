@@ -102,6 +102,22 @@ public sealed class ProjectFilesTests
     }
 
     [Fact]
+    public void Tests_NeverWriteTheProcessEnvironment()
+    {
+        // Built by concatenation, so this file does not match itself.
+        string needle = "Environment." + "SetEnvironmentVariable";
+        string tests = RepoFiles.PathOf("tests/PRWatch.Tests");
+        string[] files = [.. Directory.EnumerateFiles(tests, "*.cs", SearchOption.AllDirectories)
+            .Where(file => !IsBuildOutput(tests, file))];
+        Assert.NotEmpty(files);
+        foreach (string file in files)
+        {
+            Assert.False(File.ReadAllText(file).Contains(needle, StringComparison.Ordinal),
+                "writes the process environment: " + Path.GetRelativePath(tests, file));
+        }
+    }
+
+    [Fact]
     public void Ci_RunsOnEveryPushAndPr_ReadOnly_OnMacos15()
     {
         string ci = RepoFiles.Read(".github/workflows/ci.yml");
