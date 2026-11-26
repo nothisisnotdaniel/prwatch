@@ -28,7 +28,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [ ] [#19](backlog/019-stop-the-output-reads-when-a.md) Stop the output reads when a run is killed
 - [ ] [#21](backlog/021-catch-every-write-error-when-saving.md) Catch every write error when saving the ledger and the status
 - [ ] [#22](backlog/022-show-a-new-request-in-the.md) Show a new request in the status even when a poll lands mid-write
-- [?] [#23](backlog/023-write-request-json-without-a-check.md) Write request.json without a check-then-write symlink window
+- [ ] [#23](backlog/023-write-request-json-without-a-check.md) Write request.json without a check-then-write symlink window
 - [?] [#24](backlog/024-make-sure-job-py-pr-request.md) Make sure job.py pr request always consumes request.json
 - [?] [#25](backlog/025-decide-how-long-an-armed-consent.md) Decide how long an armed Consent or Merge button stays armed
 - [?] [#26](backlog/026-show-a-short-sent-text-after.md) Show a short sent text after a Consent, Merge or Cancel tap
