@@ -76,6 +76,7 @@ def members(archive, label):
 
 
 def same_bytes(left, right):
+    """True when both streams hold the same bytes, read in chunks."""
     while True:
         a = left.read(CHUNK)
         b = right.read(CHUNK)
@@ -86,6 +87,7 @@ def same_bytes(left, right):
 
 
 def no_duplicate_keys(pairs):
+    """A JSON object hook that refuses a key given twice."""
     result = {}
     for key, value in pairs:
         if key in result:
@@ -95,6 +97,7 @@ def no_duplicate_keys(pairs):
 
 
 def no_constant(_):
+    """A JSON constant hook that refuses NaN, Infinity and -Infinity."""
     raise ValueError("non-standard constant")
 
 
