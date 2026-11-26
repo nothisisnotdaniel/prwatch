@@ -251,6 +251,9 @@ jobs:
 
       # MSBuild reads every environment variable as a property, ignoring case, so a name like VERSION would
       # become $(Version) here. That is why the names are RELEASE_VERSION and RELEASE_TARGET.
+      # -o "$RUNNER_TEMP/publish" puts the output in a fixed folder outside the checkout. The Smoke check
+      # runs $RUNNER_TEMP/publish/PRWatch from it and Pack moves the folder into the tarball, so these three
+      # steps must change together.
       - name: Publish
         run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version="$RELEASE_VERSION" -p:ContinuousIntegrationBuild=true -o "$RUNNER_TEMP/publish"
 
@@ -367,6 +370,9 @@ jobs:
 
       # MSBuild reads every environment variable as a property, ignoring case, so a name like VERSION would
       # become $(Version) here. That is why the names are RELEASE_VERSION and RELEASE_TARGET.
+      # -o "$RUNNER_TEMP/publish" puts the output in a fixed folder outside the checkout. The Smoke check
+      # runs $RUNNER_TEMP/publish/PRWatch from it and Pack moves the folder into the tarball, so these three
+      # steps must change together.
       - name: Publish
         run: dotnet publish src/PRWatch -c Release -r osx-arm64 --self-contained --no-restore -p:Version="$RELEASE_VERSION" -p:ContinuousIntegrationBuild=true -o "$RUNNER_TEMP/publish"
 
