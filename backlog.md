@@ -35,7 +35,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#26](backlog/026-show-a-short-sent-text-after.md) Show a short sent text after a Consent, Merge or Cancel tap → 456-sent-text-after-tap.6a99ea8eb9f44c33bccb854ff592618b
 - [x] [#27](backlog/027-check-the-tap-area-of-the.md) Check the tap area of the on/off switch on the iPhone
 - [x] [#28](backlog/028-drop-the-unneeded-checkout-in-the.md) Drop the unneeded checkout in the release job → 457-drop-release-checkout.835d19cc90b24dca9a12534f081c7e21
-- [ ] [#29](backlog/029-verify-the-release-tarball-independently-of.md) Verify the release tarball independently of the build job's hash
+- [x] [#29](backlog/029-verify-the-release-tarball-independently-of.md) Verify the release tarball independently of the build job's hash → 458-verify-release-hash.2627d768c70142ccbf0f691f91a4bd9f
 - [ ] [#30](backlog/030-tidy-the-publish-output-flag-in.md) Tidy the publish output flag in release.yml
 - [ ] [#31](backlog/031-keep-a-live-review-s-update.md) Keep a live review's update lock when a second instance starts
 - [ ] [#32](backlog/032-note-why-the-roomkit-feed-tests.md) Note why the RoomKit check tests need bash
