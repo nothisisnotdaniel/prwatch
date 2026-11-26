@@ -9,7 +9,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 `- [h]` items are tasks for you. `(after: #3)` waits until item 3 is done; `(after: Times#5)` names another project's item.
 - [x] [#1](backlog/001-app-skeleton-on-the-roomkit-core.md) App skeleton on the RoomKit core → 419-app-skeleton-roomkit.bf29a276d8174f69ad61ab80f72c8298
 - [x] [#2](backlog/002-settings-and-status-file.md) Settings and status file (after: #1) → 421-settings-status-file.48ccee759b2f4905b1ee027461afa8e9
-- [ ] [#3](backlog/003-watcher-loop.md) Watcher loop (after: #2)
+- [x] [#3](backlog/003-watcher-loop.md) Watcher loop (after: #2) → 422-watcher-loop.e53dfd362cf04acca992b1b60dd36c2e
 - [ ] [#4](backlog/004-headless-claude-runner.md) Headless claude runner (after: #3; factory#61)
 - [ ] [#5](backlog/005-token-brake.md) Token brake (after: #4)
 - [ ] [#6](backlog/006-consent-merge-and-cancel-requests.md) Consent, Merge and Cancel requests (after: #3)
