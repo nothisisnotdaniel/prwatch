@@ -8,7 +8,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 `- [?]` items are follow-ups the factory proposed: change `[?]` to `[ ]` to approve one, or delete the line and its file.
 `- [h]` items are tasks for you. `(after: #3)` waits until item 3 is done; `(after: Times#5)` names another project's item.
 - [x] [#1](backlog/001-app-skeleton-on-the-roomkit-core.md) App skeleton on the RoomKit core → 419-app-skeleton-roomkit.bf29a276d8174f69ad61ab80f72c8298
-- [ ] [#2](backlog/002-settings-and-status-file.md) Settings and status file (after: #1)
+- [x] [#2](backlog/002-settings-and-status-file.md) Settings and status file (after: #1) → 421-settings-status-file.48ccee759b2f4905b1ee027461afa8e9
 - [ ] [#3](backlog/003-watcher-loop.md) Watcher loop (after: #2)
 - [ ] [#4](backlog/004-headless-claude-runner.md) Headless claude runner (after: #3; factory#61)
 - [ ] [#5](backlog/005-token-brake.md) Token brake (after: #4)
