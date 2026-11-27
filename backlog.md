@@ -18,8 +18,9 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#9](backlog/009-install-at-login-and-auto-update.md) Install at login and auto-update (after: #7; #8) → 428-install-login-autoupdate.a596cf0b74a0402cb519bfe12ad1b796
 - [x] [#10](backlog/010-create-the-github-repo-nothisisnotdaniel-prwatch.md) Create the GitHub repo nothisisnotdaniel/prwatch and push develop
 - [x] [#34](backlog/034-switch-prwatch-to-roomkit-0-1.md) Switch PRWatch to RoomKit 0.1.0 from the roomkit repo → 432-roomkit-github-packages.9be0ff12fcfa4691be4c66d09b589556
-- [ ] [#50](backlog/050-skip-the-ci-tests-for-backlog.md) Skip the CI tests for backlog and lessons changes (after: factory#85)
 - [stop] Auto stops here
+- [ ] [#50](backlog/050-skip-the-ci-tests-for-backlog.md) Skip the CI tests for backlog and lessons changes (after: factory#85)
+- [ ] [#42](backlog/042-keep-the-login-state-after-an.md) Keep the login state after an error run that had an auth result
 - [h] [#11](backlog/011-test-prwatch-end-to-end-with.md) Test PRWatch end to end with a real PR (after: #9)
 - [x] [#12](backlog/012-verify-the-roomkit-package-signature-in.md) Verify the RoomKit package signature in CI (after: #1) → 430-roomkit-signature-ci.0c91bd8ba359453e94f1e4c8273d544b
 - [x] [#13](backlog/013-build-the-headless-allow-list-per.md) Build the headless allow-list per PR
@@ -48,10 +49,6 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#39](backlog/039-test-the-factory-pr-filter-with.md) Test the factory PR filter with an empty projects list → 466-empty-projects-tests.db5cc0a14ab14624affcad9db58d47be
 - [x] [#40](backlog/040-skip-the-poll-tree-kill-after.md) Skip the poll tree kill after the process has exited → 467-poll-kill-after-exit.6f47681007d64fe68e901d0d1bbcb7b8
 - [x] [#41](backlog/041-cover-both-empty-values-for-each.md) Cover both empty values for each name in the runner environment tests → 468-runner-env-empty-tests.906a6828bd92479ea5626a3e4a7306e2
-- [ ] [#42](backlog/042-keep-the-login-state-after-an.md) Keep the login state after an error run that had an auth result
-- [ ] [#43](backlog/043-wait-for-the-run-timeout-timer.md) Wait for the run timeout timer in the AC-2 runner test
-- [ ] [#44](backlog/044-guard-the-lock-release-in-the.md) Guard the lock release in the runner's abandon path
-- [ ] [#45](backlog/045-use-a-stored-sequence-instead-of.md) Use a stored sequence instead of the clock to tell whether a request was used
 - [ ] [#46](backlog/046-compare-the-full-file-mode-in.md) Compare the full file mode in the release tarball check
 - [ ] [#48](backlog/048-say-when-restore-sh-can-t.md) Say when restore.sh can't reach the keychain, not only that the prompt was denied
 - [ ] [#49](backlog/049-show-factory-job-pull-requests-with.md) Show factory job pull requests with their job and reused reviews (after: factory#77)
