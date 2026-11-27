@@ -19,6 +19,7 @@ Each story has one `Category: <name>` line after its story sentence, one of: fea
 - [x] [#10](backlog/010-create-the-github-repo-nothisisnotdaniel-prwatch.md) Create the GitHub repo nothisisnotdaniel/prwatch and push develop
 - [x] [#34](backlog/034-switch-prwatch-to-roomkit-0-1.md) Switch PRWatch to RoomKit 0.1.0 from the roomkit repo → 432-roomkit-github-packages.9be0ff12fcfa4691be4c66d09b589556
 - [ ] [#50](backlog/050-skip-the-ci-tests-for-backlog.md) Skip the CI tests for backlog and lessons changes (after: factory#85)
+- [stop] Auto stops here
 - [h] [#11](backlog/011-test-prwatch-end-to-end-with.md) Test PRWatch end to end with a real PR (after: #9)
 - [x] [#12](backlog/012-verify-the-roomkit-package-signature-in.md) Verify the RoomKit package signature in CI (after: #1) → 430-roomkit-signature-ci.0c91bd8ba359453e94f1e4c8273d544b
 - [x] [#13](backlog/013-build-the-headless-allow-list-per.md) Build the headless allow-list per PR
